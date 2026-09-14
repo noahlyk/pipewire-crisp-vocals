@@ -213,13 +213,12 @@ jobs:
 
             rm -rf aur-push/*
             cp aur/PKGBUILD aur-push/
-            cp aur/pipewire-crisp-vocals.install aur-push/
 
             cd aur-push
             makepkg --printsrcinfo > .SRCINFO
             git config user.name "GitHub Action"
             git config user.email "action@github.com"
-            git add PKGBUILD .SRCINFO pipewire-crisp-vocals.install
+            git add PKGBUILD .SRCINFO
             git commit -m "Update to v${VERSION}" || echo "No changes to commit"
             git push origin master
           '
