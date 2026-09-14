@@ -97,9 +97,9 @@ jobs:
           OUT="pipewire-crisp-vocals-${VERSION}-${ARCH_NAME}"
           mkdir -p "$OUT"
           cp target/release/crisp-vocals target/release/crisp-links "$OUT/"
-          cp systemd/*.service "$OUT/"
+          cp systemd/pipewire-crisp-vocals.service "$OUT/"
           cp config/*.conf config/*.example "$OUT/"
-          cp scripts/first-run-setup.sh "$OUT/"
+          cp scripts/pipewire-crisp-vocals-wrapper.sh "$OUT/"
           cp README.md ARCHITECTURE.md LICENSE "$OUT/"
           tar -czf "${OUT}.tar.gz" -C "$OUT" .
           sha256sum "${OUT}.tar.gz" > "${OUT}.sha256"

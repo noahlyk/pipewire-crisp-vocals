@@ -1,0 +1,10 @@
+[package]
+name = "crisp-config"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "crisp_config"
+path = "src/lib.rs"
+
+[dependencies]

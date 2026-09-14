@@ -1,9 +1,11 @@
-# crisp-vocals: the dedicated mic processing node (chain + parameters in
-# ~/.config/pipewire/crisp-vocals.ron, hot-reloaded). Feeds the processed
-# stream to the "virtual-mic" device; crisp-links taps its monitor into the
-# speakers for self-monitoring.
+# pipewire-crisp-vocals: the single unit for the whole stack -- supervises
+# both crisp-vocals (DSP chain, config hot-reloaded from
+# ~/.config/pipewire/crisp-vocals.ron) and crisp-links (declarative
+# PipeWire auto-wiring, config read from the same file) via a small wrapper
+# script. Config is auto-bootstrapped on first run by the binaries
+# themselves -- no separate setup unit.
 [Unit]
-Description=crisp-vocals dedicated mic processing node
+Description=crisp-vocals dedicated mic processing + auto-wiring
 Documentation=https://github.com/noahlyk/pipewire-crisp-vocals
 After=pipewire.service
 Requires=pipewire.service
@@ -11,7 +13,7 @@ PartOf=pipewire.service
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/pw-jack /usr/bin/crisp-vocals
+ExecStart=/usr/lib/crisp-vocals/pipewire-crisp-vocals-wrapper.sh
 Restart=on-failure
 RestartSec=3
 # Explicit RT scheduling instead of relying solely on rtkit's dynamic

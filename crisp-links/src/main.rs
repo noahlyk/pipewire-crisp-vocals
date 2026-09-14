@@ -42,6 +42,7 @@
 //! decision instead of performing it -- fully read-only against the live
 //! graph, safe to run alongside the real service for diagnosis.
 
+use clap::{Args, Parser, Subcommand};
 use pipewire as pw;
 use pw::loop_::Signal;
 use pw::properties::properties;
@@ -52,7 +53,6 @@ use serde::Deserialize;
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::env;
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::rc::Rc;
@@ -101,9 +101,9 @@ impl Default for LinkingConf {
 struct HardwareConf {
     /// Physical mic node's PipeWire `node.name` (substring match), e.g.
     /// "Komplete". Blank (the shipped default) means "no physical mic
-    /// routed yet" -- the first-run setup script fills this in from the
-    /// system's current default audio source; see the systemd
-    /// `crisp-vocals-setup.service` unit.
+    /// routed yet" -- `crisp_config::bootstrap_if_missing()` fills this in
+    /// from the system's current default audio source on first run; see
+    /// also `crisp-links mic --auto`.
     #[serde(default)]
     mic_node_name: String,
 }
@@ -133,11 +133,7 @@ fn default_true() -> bool {
 /// `$XDG_CONFIG_HOME/pipewire/crisp-vocals.ron`, else
 /// `~/.config/pipewire/crisp-vocals.ron`.
 fn config_path() -> PathBuf {
-    let dir = env::var("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(env::var("HOME").expect("HOME unset")).join(".config"))
-        .join("pipewire");
-    env::var("CRISP_VOCALS_CONF").map(PathBuf::from).unwrap_or_else(|_| dir.join("crisp-vocals.ron"))
+    crisp_config::config_path()
 }
 
 /// Loaded once at startup (unlike crisp-vocals, this crate has no hot
@@ -891,15 +887,108 @@ fn extract_json_name(value: &str) -> Option<String> {
 // MAIN — persistent PipeWire client, event-driven.
 // ────────────────────────────────────────────────────────────────────
 
+/// `crisp-links mic ...` -- CLI-only config editing, no daemon/PipeWire
+/// client involved. Exits the process directly (success or failure) rather
+/// than returning, so `main()`'s daemon path below never runs alongside it.
+#[derive(Parser, Debug)]
+#[command(name = "crisp-links", about = "PipeWire auto-wiring for the crisp-vocals stack")]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+    /// Log every connect/disconnect/vmic-provision/synth-start decision
+    /// instead of performing it. Ignored when a subcommand is given.
+    #[arg(long, global = true)]
+    dry_run: bool,
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Get/set hardware.mic_node_name in ~/.config/pipewire/crisp-vocals.ron
+    Mic(MicArgs),
+}
+
+#[derive(Args, Debug)]
+struct MicArgs {
+    /// Set hardware.mic_node_name to this exact PipeWire node name.
+    node_name: Option<String>,
+    /// Re-run auto-detection (same logic as first-run bootstrap) and set
+    /// hardware.mic_node_name to the result.
+    #[arg(long)]
+    auto: bool,
+    /// List current PipeWire audio source nodes instead of setting anything.
+    #[arg(long)]
+    list: bool,
+}
+
+fn run_mic_command(args: MicArgs) -> ! {
+    if let Err(e) = crisp_config::bootstrap_if_missing() {
+        eprintln!("[crisp-links] config bootstrap failed: {e}");
+    }
+
+    if args.list {
+        match crisp_config::list_audio_sources() {
+            Ok(sources) if sources.is_empty() => {
+                eprintln!("[crisp-links] no audio sources found (is wpctl/PipeWire running?)");
+                std::process::exit(1);
+            }
+            Ok(sources) => {
+                for s in sources {
+                    println!("{s}");
+                }
+                std::process::exit(0);
+            }
+            Err(e) => {
+                eprintln!("[crisp-links] failed to list audio sources: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+
+    let mic = if args.auto {
+        match crisp_config::detect_default_mic() {
+            Some(m) => m,
+            None => {
+                eprintln!("[crisp-links] could not auto-detect the default audio source");
+                std::process::exit(1);
+            }
+        }
+    } else if let Some(name) = args.node_name {
+        name
+    } else {
+        eprintln!("usage: crisp-links mic <node-name> | crisp-links mic --auto | crisp-links mic --list");
+        std::process::exit(2);
+    };
+
+    let path = config_path();
+    match crisp_config::update_mic_node_name(&path, &mic) {
+        Ok(()) => {
+            println!("set hardware.mic_node_name = \"{mic}\" in {}", path.display());
+            std::process::exit(0);
+        }
+        Err(e) => {
+            eprintln!("[crisp-links] failed to update {}: {e}", path.display());
+            std::process::exit(1);
+        }
+    }
+}
+
 fn main() {
-    let dry_run = std::env::args().any(|a| a == "--dry-run");
+    let cli = Cli::parse();
+    if let Some(Commands::Mic(args)) = cli.command {
+        run_mic_command(args);
+    }
+    let dry_run = cli.dry_run;
+
+    if let Err(e) = crisp_config::bootstrap_if_missing() {
+        eprintln!("[crisp-links] config bootstrap failed: {e}");
+    }
     let conf = load_conf();
 
     if conf.hardware.mic_node_name.is_empty() {
         eprintln!(
             "[crisp-links] hardware.mic_node_name is blank in crisp-vocals.ron -- the physical mic won't be \
-             routed to crisp-vocals until it's set (crisp-vocals-setup.service should have filled this in on \
-             first run; run it manually or edit the config by hand)."
+             routed to crisp-vocals until it's set. Run `crisp-links mic --auto` or `crisp-links mic <node-name>`, \
+             or edit the config by hand."
         );
     }
 

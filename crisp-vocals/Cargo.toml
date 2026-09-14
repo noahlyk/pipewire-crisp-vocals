@@ -8,6 +8,7 @@ name = "crisp-vocals"
 path = "src/main.rs"
 
 [dependencies]
+crisp-config = { path = "../crisp-config" }
 jack = "0.11.4"
 arc-swap = "1"
 serde = { version = "1", features = ["derive"] }

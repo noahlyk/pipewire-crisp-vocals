@@ -8,6 +8,8 @@ name = "crisp-links"
 path = "src/main.rs"
 
 [dependencies]
+crisp-config = { path = "../crisp-config" }
+clap = { version = "4", features = ["derive"] }
 pipewire = { version = "0.10.1", features = ["v1_2_0"] }
 serde = { version = "1", features = ["derive"] }
 ron = "0.8"

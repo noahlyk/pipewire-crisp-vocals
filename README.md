@@ -47,28 +47,29 @@ makepkg -si
    systemctl --user restart pipewire pipewire-pulse wireplumber
    ```
 
-2. **Enable the user services:**
+2. **Enable the one user service:**
 
    ```bash
-   systemctl --user enable --now crisp-vocals-setup.service
-   systemctl --user enable --now crisp-vocals.service
-   systemctl --user enable --now crisp-links.service
+   systemctl --user enable --now pipewire-crisp-vocals.service
    ```
 
-   `crisp-vocals-setup.service` runs once: it copies the shipped example
-   config to `~/.config/pipewire/crisp-vocals.ron` (never overwriting an
-   existing one) and fills in `hardware.mic_node_name` from your current
-   default audio source (via `wpctl inspect @DEFAULT_AUDIO_SOURCE@`, with a
-   `pactl` fallback).
-
-   **Why a user unit and not a `post_install` hook:** `pacman`'s install
-   hooks run as root with no reliable invoking-user context — no real
-   `$HOME`, no user D-Bus/PipeWire session to query the default audio
-   source from. `PKGBUILD`'s `post_install()` here only prints these
-   instructions; the actual per-user file write happens in
-   `crisp-vocals-setup.service`, a normal user unit with a real session.
+   This single unit supervises both `crisp-vocals` and `crisp-links`. On
+   first run (no `~/.config/pipewire/crisp-vocals.ron` yet), whichever
+   binary starts first copies the shipped example config into place and
+   fills in `hardware.mic_node_name` from your current default audio source
+   (via `wpctl inspect @DEFAULT_AUDIO_SOURCE@`, with a `pactl` fallback) --
+   no separate setup step.
 
 3. **Select `virtual-mic`** as your microphone in Discord/OBS/etc.
+
+4. **Changed mics, or the auto-detected one was wrong?** Use the `mic`
+   subcommand instead of hand-editing the config:
+
+   ```bash
+   crisp-links mic --list                 # see current PipeWire audio sources
+   crisp-links mic "USB PnP Audio Device"  # set it explicitly
+   crisp-links mic --auto                  # re-run auto-detection
+   ```
 
 ## Configuration reference
 
@@ -128,7 +129,7 @@ Switching modes is just editing `active_mode` and saving.
 ## Uninstall
 
 ```bash
-systemctl --user disable --now crisp-vocals.service crisp-links.service crisp-vocals-setup.service
+systemctl --user disable --now pipewire-crisp-vocals.service
 yay -Rns pipewire-crisp-vocals
 rm ~/.config/pipewire/crisp-vocals.ron   # if you want to drop your tuned config too
 ```

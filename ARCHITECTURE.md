@@ -2,13 +2,20 @@
 
 ## Overview
 
-Two small, single-purpose daemons plus two PipeWire config drop-ins:
+Two small, single-purpose daemons plus two PipeWire config drop-ins, plus a
+tiny shared library crate:
 
 - **`crisp-vocals`** (JACK client) — the DSP chain. Reads raw mic audio,
   writes processed audio. Nothing else.
 - **`crisp-links`** (native PipeWire registry client) — the wiring. Watches
   the graph and issues link create/destroy calls so the right nodes are
-  connected to the right nodes. Nothing else.
+  connected to the right nodes. Also owns the `mic` CLI subcommand
+  (`crisp-links mic <node-name> | --auto | --list`) for editing
+  `hardware.mic_node_name` without hand-editing RON.
+- **`crisp-config`** (library crate, no binary) — config-path resolution,
+  first-run bootstrap (copy the packaged example config + auto-detect the
+  mic), and the targeted `mic_node_name` text edit. Used by both binaries
+  above so neither duplicates this logic.
 - **`99-crisp-vocals.conf`** — defines the two virtual devices (`vinput`,
   `virtual-mic`) crisp-links wires into.
 - **`99-crisp-vocals-low-latency.conf`** — a tighter PipeWire clock
@@ -17,7 +24,12 @@ Two small, single-purpose daemons plus two PipeWire config drop-ins:
 
 Splitting DSP from wiring means either can be restarted, tested, or
 reasoned about independently — `crisp-vocals` never touches the PipeWire
-registry, `crisp-links` never touches a sample.
+registry, `crisp-links` never touches a sample. Both binaries are started
+and supervised together by ONE systemd unit,
+`pipewire-crisp-vocals.service`, via a small wrapper script
+(`scripts/pipewire-crisp-vocals-wrapper.sh`) that forwards signals to both
+children and treats either one exiting on its own as a failure of the whole
+unit -- see "Supervision" below.
 
 ## Signal flow
 
@@ -153,6 +165,55 @@ event in practice.
 - **On-demand synth lifecycle**: if `synth.enabled`, fluidsynth is spawned
   only while `synth.midi_keyboard_name` is plugged in, and killed when it's
   unplugged — not run continuously.
+
+## Config bootstrap (`crisp-config`)
+
+Neither binary requires a separate setup step or unit anymore. At startup,
+both `crisp-vocals::main` and `crisp-links::main` call
+`crisp_config::bootstrap_if_missing()` before touching `crisp-vocals.ron`:
+
+1. If `config_path()` already exists, it's a no-op.
+2. Otherwise, it reads the packaged example config from
+   `/usr/share/pipewire-crisp-vocals/crisp-vocals.ron.example` (installed
+   there by `PKGBUILD`/`aur/PKGBUILD`), auto-detects the current default
+   audio source (`wpctl inspect @DEFAULT_AUDIO_SOURCE@`, falling back to
+   `pactl get-default-source` + `pactl list sources`), fills in
+   `hardware.mic_node_name` via a targeted line-scan text edit (NOT a RON
+   parse+reserialize — that would destroy hand-written comments like
+   `// active_mode: "raw"` in the example), and writes the result to
+   `config_path()`.
+3. The actual file creation uses `OpenOptions::create_new` — atomic
+   "create iff absent" at the OS level — so when both binaries race to
+   bootstrap at once (the normal case now that one systemd unit starts them
+   together), the loser's `AlreadyExists` is treated as success rather than
+   clobbering the winner's write. A full temp-file-plus-rename dance was
+   judged unnecessary for a one-time, small, single `write_all` of a config
+   file.
+
+The same `crisp-config::set_mic_node_name_in_text` text-edit routine backs
+`crisp-links mic <node-name>` / `mic --auto`, so there's exactly one place
+that knows how to safely rewrite that one line.
+
+## Supervision (single systemd unit)
+
+`pipewire-crisp-vocals.service` runs one `ExecStart`:
+`scripts/pipewire-crisp-vocals-wrapper.sh`, a small bash script that starts
+both `pw-jack crisp-vocals` and `crisp-links` as background jobs (both
+binaries resolved via `PATH`, since `PKGBUILD` installs them to
+`/usr/bin`) and:
+
+- On SIGTERM/SIGINT (a normal `systemctl stop`), forwards the signal to
+  both children, waits for a clean exit, and exits 0 — `Restart=on-failure`
+  correctly leaves the unit stopped.
+- If either child exits on its own for any other reason (crash, or any
+  exit at all — even a "clean" 0, since one half of the stack going away
+  unprompted is never a healthy steady state here), the wrapper brings the
+  other child down too and exits non-zero with the worse of the two exit
+  codes, so `Restart=on-failure` restarts the *whole* unit rather than
+  leaving one half running alone.
+
+This replaces the old three separate units (`crisp-vocals.service`,
+`crisp-links.service`, `crisp-vocals-setup.service`) with one.
 
 ## Configuration is one shared file
 

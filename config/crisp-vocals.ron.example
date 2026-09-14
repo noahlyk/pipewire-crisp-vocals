@@ -1,11 +1,14 @@
 // crisp-vocals.ron — DSP chain + wiring config, hot-reloaded on save.
 //
-// Installed here by the package as a `.example` template; the
-// `crisp-vocals-setup.service` user unit copies it to
+// Installed here by the package as a template
+// (/usr/share/pipewire-crisp-vocals/crisp-vocals.ron.example); crisp-vocals
+// and crisp-links both auto-bootstrap it to
 // ~/.config/pipewire/crisp-vocals.ron on first run (never overwriting an
-// existing one) and fills in `hardware.mic_node_name` from your current
-// default audio source. Edit freely after that -- crisp-vocals and
-// crisp-links both hot-reload/re-read from that path.
+// existing one) and fill in `hardware.mic_node_name` from your current
+// default audio source -- see crisp-config::bootstrap_if_missing(). Edit
+// freely after that -- crisp-vocals and crisp-links both hot-reload/re-read
+// from that path. Use `crisp-links mic <node-name>|--auto|--list` to change
+// the routed mic later without hand-editing this file.
 (
     preamp_db: 12.0,
     // active_mode: "raw",
@@ -17,8 +20,9 @@
         // Physical mic's PipeWire node name (substring match), e.g.
         // "Komplete", "USB PnP Audio Device". Filled in automatically on
         // first run from @DEFAULT_AUDIO_SOURCE@ -- see
-        // crisp-vocals-setup.service. Blank = crisp-links won't route a
-        // physical mic into crisp-vocals until this is set.
+        // crisp-config::bootstrap_if_missing(). Blank = crisp-links won't
+        // route a physical mic into crisp-vocals until this is set (use
+        // `crisp-links mic <node-name>|--auto|--list`).
         mic_node_name: "",
     ),
 

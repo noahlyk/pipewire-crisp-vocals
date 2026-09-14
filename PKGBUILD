@@ -26,20 +26,21 @@ package() {
     install -Dm755 "target/release/crisp-vocals" "$pkgdir/usr/bin/crisp-vocals"
     install -Dm755 "target/release/crisp-links" "$pkgdir/usr/bin/crisp-links"
 
-    # First-run setup helper
-    install -Dm755 "scripts/first-run-setup.sh" "$pkgdir/usr/lib/crisp-vocals/first-run-setup.sh"
+    # Supervisor wrapper (single systemd unit starts both binaries)
+    install -Dm755 "scripts/pipewire-crisp-vocals-wrapper.sh" "$pkgdir/usr/lib/crisp-vocals/pipewire-crisp-vocals-wrapper.sh"
 
-    # systemd user units
-    install -Dm644 "systemd/crisp-vocals.service" "$pkgdir/usr/lib/systemd/user/crisp-vocals.service"
-    install -Dm644 "systemd/crisp-links.service" "$pkgdir/usr/lib/systemd/user/crisp-links.service"
-    install -Dm644 "systemd/crisp-vocals-setup.service" "$pkgdir/usr/lib/systemd/user/crisp-vocals-setup.service"
+    # systemd user unit (one unit, supervises both binaries)
+    install -Dm644 "systemd/pipewire-crisp-vocals.service" "$pkgdir/usr/lib/systemd/user/pipewire-crisp-vocals.service"
 
     # PipeWire config drop-ins
     install -Dm644 "config/99-crisp-vocals.conf" "$pkgdir/usr/share/pipewire/pipewire.conf.d/99-crisp-vocals.conf"
     install -Dm644 "config/99-crisp-vocals-low-latency.conf" "$pkgdir/usr/share/pipewire/pipewire.conf.d/99-crisp-vocals-low-latency.conf"
 
-    # Example config + docs
-    install -Dm644 "config/crisp-vocals.ron.example" "$pkgdir/usr/share/doc/$pkgname/crisp-vocals.ron.example"
+    # Example config, packaged as a runtime asset (both binaries bootstrap
+    # from this path on first run -- see crisp-config::EXAMPLE_CONF_PATH)
+    install -Dm644 "config/crisp-vocals.ron.example" "$pkgdir/usr/share/pipewire-crisp-vocals/crisp-vocals.ron.example"
+
+    # Docs
     install -Dm644 "README.md" "$pkgdir/usr/share/doc/$pkgname/README.md"
     install -Dm644 "ARCHITECTURE.md" "$pkgdir/usr/share/doc/$pkgname/ARCHITECTURE.md"
     install -Dm644 "LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
@@ -57,13 +58,12 @@ post_install() {
     echo "    ln -s /usr/share/pipewire/pipewire.conf.d/99-crisp-vocals-low-latency.conf ~/.config/pipewire/pipewire.conf.d/"
     echo "    systemctl --user restart pipewire pipewire-pulse wireplumber"
     echo ""
-    echo "==> Then enable the user services (config auto-populates on first run):"
-    echo "    systemctl --user enable --now crisp-vocals-setup.service"
-    echo "    systemctl --user enable --now crisp-vocals.service"
-    echo "    systemctl --user enable --now crisp-links.service"
+    echo "==> Then enable the one user service (config + mic auto-detect on first run):"
+    echo "    systemctl --user enable --now pipewire-crisp-vocals.service"
     echo ""
     echo "    Edit ~/.config/pipewire/crisp-vocals.ron afterward to tune the DSP chain --"
-    echo "    changes hot-reload within ~50ms, no restart needed."
+    echo "    changes hot-reload within ~50ms, no restart needed. Use 'crisp-links mic'"
+    echo "    to change the routed mic (<node-name> | --auto | --list)."
 }
 
 post_upgrade() {

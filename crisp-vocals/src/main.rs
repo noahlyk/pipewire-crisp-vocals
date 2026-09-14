@@ -41,7 +41,6 @@
 //!   - eq         final tone shaping (parametric biquads).
 //!   - rnnoise    spectral denoiser, applied after the rest of the chain.
 
-use std::env;
 use std::ffi::OsStr;
 use std::fs;
 use std::path::PathBuf;
@@ -59,8 +58,6 @@ use serde::Deserialize;
 
 static RATE: AtomicU32 = AtomicU32::new(96000);
 static VERSION: AtomicU64 = AtomicU64::new(0);
-
-const DEFAULT_CONF: &str = "crisp-vocals.ron";
 
 // ────────────────────────────────────────────────────────────────────────────
 // CONFIG — RON, not TOML: field names are used as-is (snake_case, matching
@@ -978,12 +975,10 @@ impl VocalDsp {
 // CONFIG LOAD / RELOAD
 // ────────────────────────────────────────────────────────────────────────────
 
+/// Delegates to the shared `crisp-config` crate so `crisp-vocals` and
+/// `crisp-links` can't drift on where the one shared config file lives.
 fn config_path() -> PathBuf {
-    let dir = env::var("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(env::var("HOME").expect("HOME unset")).join(".config"))
-        .join("pipewire");
-    env::var("CRISP_VOCALS_CONF").map(PathBuf::from).unwrap_or_else(|_| dir.join(DEFAULT_CONF))
+    crisp_config::config_path()
 }
 
 /// Load + parse the config at a specific path (bumping `VERSION`). Split out
@@ -1181,6 +1176,10 @@ impl ProcessHandler for CrispVocals {
 // ────────────────────────────────────────────────────────────────────────────
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if let Err(e) = crisp_config::bootstrap_if_missing() {
+        eprintln!("[crisp-vocals] config bootstrap failed: {e}");
+    }
+
     let (client, _status) = Client::new("crisp-vocals", ClientOptions::empty())?;
     let rate = client.sample_rate() as u32;
     RATE.store(rate, Ordering::Relaxed);
