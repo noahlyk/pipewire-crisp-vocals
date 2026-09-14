@@ -1,0 +1,13 @@
+[package]
+name = "crisp-links"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "crisp-links"
+path = "src/main.rs"
+
+[dependencies]
+pipewire = { version = "0.10.1", features = ["v1_2_0"] }
+serde = { version = "1", features = ["derive"] }
+ron = "0.8"

@@ -1,0 +1,37 @@
+name: Build to test PR
+
+on:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Install system dependencies
+        run: pacman -Syu --noconfirm base-devel git rust pipewire jack2 pkgconf
+      - uses: actions/checkout@v4
+      - name: Build binaries
+        run: cargo build --release --locked
+      - name: Run tests
+        run: cargo test --release --locked
+      - name: Create tarball
+        run: |
+          ARCH=$(uname -m)
+          if [ "$ARCH" = "x86_64" ]; then
+            ARCH_NAME="x86_64"
+          elif [ "$ARCH" = "aarch64" ]; then
+            ARCH_NAME="aarch64"
+          fi
+          mkdir -p pipewire-crisp-vocals-pr-${ARCH_NAME}
+          cp target/release/crisp-vocals target/release/crisp-links pipewire-crisp-vocals-pr-${ARCH_NAME}/
+          cp systemd/*.service pipewire-crisp-vocals-pr-${ARCH_NAME}/
+          cp config/*.conf config/*.example pipewire-crisp-vocals-pr-${ARCH_NAME}/
+          cp scripts/first-run-setup.sh pipewire-crisp-vocals-pr-${ARCH_NAME}/
+          cp README.md ARCHITECTURE.md LICENSE pipewire-crisp-vocals-pr-${ARCH_NAME}/
+          tar -czf pipewire-crisp-vocals-pr-${ARCH_NAME}.tar.gz -C pipewire-crisp-vocals-pr-${ARCH_NAME} .
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: pipewire-crisp-vocals-linux
+          path: pipewire-crisp-vocals-pr-*.tar.gz

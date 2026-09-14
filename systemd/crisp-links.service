@@ -1,0 +1,17 @@
+# crisp-links: declarative graph auto-wiring (routing table read from
+# ~/.config/pipewire/crisp-vocals.ron).
+[Unit]
+Description=crisp-vocals automatic PipeWire links and monitoring
+Documentation=https://github.com/noahlyk/pipewire-crisp-vocals
+After=pipewire.service
+Requires=pipewire.service
+PartOf=pipewire.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/crisp-links
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=pipewire.service

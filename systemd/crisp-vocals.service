@@ -1,0 +1,28 @@
+# crisp-vocals: the dedicated mic processing node (chain + parameters in
+# ~/.config/pipewire/crisp-vocals.ron, hot-reloaded). Feeds the processed
+# stream to the "virtual-mic" device; crisp-links taps its monitor into the
+# speakers for self-monitoring.
+[Unit]
+Description=crisp-vocals dedicated mic processing node
+Documentation=https://github.com/noahlyk/pipewire-crisp-vocals
+After=pipewire.service
+Requires=pipewire.service
+PartOf=pipewire.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/pw-jack /usr/bin/crisp-vocals
+Restart=on-failure
+RestartSec=3
+# Explicit RT scheduling instead of relying solely on rtkit's dynamic
+# promotion. Requires membership in the `audio` group (or an equivalent
+# /etc/security/limits.d grant of rtprio 95 + unlimited memlock); if this
+# unit fails to start with "Failed to set up special execution directive",
+# drop these four lines and restart.
+CPUSchedulingPolicy=fifo
+CPUSchedulingPriority=88
+LimitRTPRIO=95
+LimitMEMLOCK=infinity
+
+[Install]
+WantedBy=pipewire.service

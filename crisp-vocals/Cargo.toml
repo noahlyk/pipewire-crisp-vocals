@@ -1,0 +1,16 @@
+[package]
+name = "crisp-vocals"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "crisp-vocals"
+path = "src/main.rs"
+
+[dependencies]
+jack = "0.11.4"
+arc-swap = "1"
+serde = { version = "1", features = ["derive"] }
+ron = "0.8"
+notify = { version = "8", default-features = false }
+nnnoiseless = "0.5.2"
