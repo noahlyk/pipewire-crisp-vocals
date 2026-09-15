@@ -9,7 +9,7 @@ jobs:
     container: archlinux:latest
     steps:
       - name: Install system dependencies
-        run: pacman -Syu --noconfirm base-devel git rust pipewire jack2 pkgconf
+        run: pacman -Syu --noconfirm base-devel git rust pipewire jack2 pkgconf clang
       - uses: actions/checkout@v4
       - name: Build binaries
         run: cargo build --release --locked

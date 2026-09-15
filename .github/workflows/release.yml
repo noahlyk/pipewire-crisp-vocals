@@ -7,19 +7,15 @@ on:
 jobs:
   check-skip:
     runs-on: ubuntu-latest
-    container: archlinux:latest
     outputs:
       should_skip: ${{ steps.check.outputs.skip }}
     steps:
       - name: Check if this is a version bump commit
         id: check
         run: |
-          MSG="${{ github.event.head_commit.message }}"
-          if echo "$MSG" | grep -q "^chore: bump version"; then
-            echo "skip=true" >> $GITHUB_OUTPUT
-          else
-            echo "skip=false" >> $GITHUB_OUTPUT
-          fi
+          skip=false
+          jq -r '.head_commit.message' "$GITHUB_EVENT_PATH" | grep -q "^chore: bump version" && skip=true || true
+          echo "skip=$skip" >> "$GITHUB_OUTPUT"
 
   version:
     needs: [check-skip]
@@ -69,7 +65,7 @@ jobs:
     container: archlinux:latest
     steps:
       - name: Install system dependencies
-        run: pacman -Syu --noconfirm base-devel git rust pipewire jack2 pkgconf
+        run: pacman -Syu --noconfirm base-devel git rust pipewire jack2 pkgconf clang
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
