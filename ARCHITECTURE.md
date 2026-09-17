@@ -16,8 +16,10 @@ tiny shared library crate:
   first-run bootstrap (copy the packaged example config + auto-detect the
   mic), and the targeted `mic_node_name` text edit. Used by both binaries
   above so neither duplicates this logic.
-- **`99-crisp-vocals.conf`** — defines the two virtual devices (`virtual-input`,
-  `virtual-mic`) crisp-links wires into.
+- **`virtual-devices.conf`** — defines the two virtual devices (`virtual-input`,
+  `virtual-mic`) crisp-links wires into. Run as a standalone `pipewire -c`
+  client process (supervised by the wrapper script), not a conf.d drop-in,
+  so both nodes only exist while the service is up.
 - **`99-crisp-vocals-low-latency.conf`** — a tighter PipeWire clock
   quantum, unrelated to the DSP/wiring split above but shipped alongside it
   since it's what makes the whole chain feel instant.

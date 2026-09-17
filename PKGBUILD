@@ -32,9 +32,14 @@ package() {
     # systemd user unit (one unit, supervises both binaries)
     install -Dm644 "systemd/pipewire-crisp-vocals.service" "$pkgdir/usr/lib/systemd/user/pipewire-crisp-vocals.service"
 
-    # PipeWire config drop-ins
-    install -Dm644 "config/99-crisp-vocals.conf" "$pkgdir/etc/pipewire/pipewire.conf.d/99-crisp-vocals.conf"
+    # Low-latency clock quantum: a genuine system-wide daemon setting, so
+    # it stays a permanent conf.d drop-in.
     install -Dm644 "config/99-crisp-vocals-low-latency.conf" "$pkgdir/etc/pipewire/pipewire.conf.d/99-crisp-vocals-low-latency.conf"
+
+    # virtual-input/virtual-mic node definitions: run as a standalone
+    # `pipewire -c` client process by the wrapper script (not a conf.d
+    # drop-in), so the nodes only exist while the service is running.
+    install -Dm644 "config/virtual-devices.conf" "$pkgdir/usr/share/pipewire-crisp-vocals/virtual-devices.conf"
 
     # Example config, packaged as a runtime asset (both binaries bootstrap
     # from this path on first run -- see crisp-config::EXAMPLE_CONF_PATH)
