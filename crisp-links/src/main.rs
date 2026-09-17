@@ -56,7 +56,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::rc::Rc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 // ────────────────────────────────────────────────────────────────────
 // CONFIG — `hardware`/`synth`/`linking` tables in `crisp-vocals.ron`
@@ -75,7 +75,7 @@ struct RootConf {
     synth: Option<SynthConf>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 struct LinkingConf {
     /// Master switch: false disables all linking activity (no connects, no
     /// disconnects, no virtual-sink provisioning, no synth lifecycle).
@@ -175,6 +175,11 @@ fn load_conf() -> RootConf {
 /// startup, or several events from one app launching) into one pass instead
 /// of one per event.
 const DEBOUNCE: Duration = Duration::from_millis(50);
+
+/// How often to stat `crisp-vocals.ron` for config hot-reload. Routing
+/// itself is purely event-driven, but nothing else generates a PipeWire
+/// registry/metadata event when the file is just edited on disk.
+const CONF_POLL: Duration = Duration::from_secs(1);
 
 /// A just-issued link creation is considered "in flight" (and won't be
 /// re-attempted) for this long, covering the round-trip before the server's
@@ -362,6 +367,12 @@ struct Manager {
 
     synth: Option<Child>,
     synth_stdin: Option<ChildStdin>,
+
+    /// Last-seen mtime of `crisp-vocals.ron`, so `hardware`/`synth`/`linking`
+    /// re-read on save like crisp-vocals' DSP chain does -- checked cheaply
+    /// once per (already-debounced) routing pass rather than via its own
+    /// filesystem watcher.
+    conf_mtime: Option<SystemTime>,
 }
 
 impl Manager {
@@ -392,7 +403,38 @@ impl Manager {
             _default_metadata_listener: None,
             synth: None,
             synth_stdin: None,
+            conf_mtime: std::fs::metadata(config_path()).and_then(|m| m.modified()).ok(),
         }
+    }
+
+    /// Re-read `hardware`/`synth`/`linking` from `crisp-vocals.ron` if its
+    /// mtime moved since we last looked -- makes config changes (e.g.
+    /// `linking.monitor_through_default_output`, a new `mic_node_name`)
+    /// take effect without restarting the service, matching crisp-vocals'
+    /// hot-reload of the DSP chain from the same file.
+    fn maybe_reload_conf(&mut self) {
+        let path = config_path();
+        let mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+        if mtime.is_none() || mtime == self.conf_mtime {
+            return;
+        }
+        self.conf_mtime = mtime;
+        let conf = load_conf();
+        if conf.linking != self.linking || conf.hardware.mic_node_name != self.hardware.mic_node_name {
+            // A deliberate config edit is exactly the case where
+            // `only_edit_links_on_node_init`'s "leave settled nodes alone"
+            // freeze should NOT apply -- otherwise toggling e.g.
+            // `monitor_through_default_output` after crisp-vocals/vinput/
+            // virtual-mic have already settled (which, in steady state,
+            // they always have) would silently no-op forever. Un-freeze
+            // everything so this pass re-evaluates the whole routing table
+            // against the new config, then it re-settles as normal.
+            println!("[crisp-links] config changed: {:?} -> {:?}; re-applying routes", self.linking, conf.linking);
+            self.settled_nodes.clear();
+        }
+        self.linking = conf.linking;
+        self.hardware = conf.hardware;
+        self.synth_conf = conf.synth;
     }
 
     fn synth_enabled(&self) -> bool {
@@ -639,6 +681,7 @@ impl Manager {
     // ── route engine ───────────────────────────────────────────────
 
     fn apply_routes(&mut self) {
+        self.maybe_reload_conf();
         if !self.linking.enabled {
             return;
         }
@@ -647,6 +690,7 @@ impl Manager {
             self.apply_route(route);
         }
         self.apply_self_monitor_route();
+        self.apply_vinput_speaker_route();
         if self.synth_enabled() {
             self.apply_synth_route();
         }
@@ -705,6 +749,32 @@ impl Manager {
         };
         for (src, dst) in stray {
             self.disconnect(&src, &dst);
+        }
+    }
+
+    /// vinput's monitor ("anything connected", e.g. the synth) ALWAYS also
+    /// reaches the default speaker device, unconditionally -- unlike
+    /// virtual-mic's own self-monitor tap (gated by
+    /// `linking.monitor_through_default_output`), this one is not optional:
+    /// whatever you feed into vinput should always be audible to you.
+    fn apply_vinput_speaker_route(&mut self) {
+        let Some(default) = self.default_sink.clone() else { return };
+        if default.contains(NAME_VIRTUAL_MIC) || default.contains(NAME_VINPUT) {
+            return;
+        }
+
+        let sinks = self.sink_inputs(&default);
+        if sinks.is_empty() {
+            return;
+        }
+
+        let vinput_monitor = dev(NAME_VINPUT, "monitor_");
+        for monitor in self.resolved_ports(&vinput_monitor, PortKind::AudioOut) {
+            let Some(ch) = monitor.channel() else { continue };
+            let want = format!("playback_{ch}");
+            if let Some(sink) = sinks.iter().find(|s| s.name == want) {
+                self.connect(&monitor, sink);
+            }
         }
     }
 
@@ -796,8 +866,11 @@ impl Manager {
     /// Anything on the crisp-vocals/vinput/virtual-mic nodes that isn't the
     /// routing table above is stray, so links stay exact even when apps
     /// auto-connect. crisp-vocals' output may ONLY reach virtual-mic's
-    /// input, and vinput's monitor may ONLY reach virtual-mic's input.
+    /// input, and vinput's monitor may ONLY reach virtual-mic's input or
+    /// the current default speaker device (its permanent, always-on tap --
+    /// see `apply_vinput_speaker_route`).
     fn unroute_stray_mix_links(&mut self) {
+        let default = self.default_sink.clone();
         let stray: Vec<(RPort, RPort)> = {
             let mut out = Vec::new();
             for &(out_id, in_id) in self.links.values() {
@@ -817,7 +890,9 @@ impl Manager {
                 let bad_crisp_vocals_out = crisp_vocals_out && !to_virtual_mic;
 
                 let from_vinput_monitor = src.device.contains(NAME_VINPUT) && src.name.starts_with("monitor_");
-                let bad_vinput_out = from_vinput_monitor && !to_virtual_mic;
+                let to_default_speaker =
+                    default.as_deref().is_some_and(|d| dst.device == d) && dst.name.starts_with("playback_");
+                let bad_vinput_out = from_vinput_monitor && !to_virtual_mic && !to_default_speaker;
 
                 if bad_crisp_vocals_in || bad_crisp_vocals_out || bad_vinput_out {
                     out.push((src, dst));
@@ -1103,6 +1178,20 @@ fn main() {
             }
         })
         .register();
+
+    // Config-reload timer: routing itself stays event-driven (registry +
+    // "default" metadata, above), but nothing else generates a PipeWire
+    // event when you just edit crisp-vocals.ron -- so a cheap once-a-second
+    // mtime check is the only way `linking`/`hardware`/`synth` changes take
+    // effect without waiting for an unrelated app to open/close. A no-op
+    // `fs::metadata` stat every second is negligible; only an actual
+    // mtime change triggers `apply_routes()`.
+    let reload_manager = Rc::clone(&manager);
+    let reload_timer: Rc<pw::loop_::TimerSource<'static>> =
+        Rc::new(main_loop.loop_().add_timer(move |_expirations| {
+            reload_manager.borrow_mut().apply_routes();
+        }));
+    let _ = reload_timer.update_timer(Some(CONF_POLL), Some(CONF_POLL));
 
     println!(
         "crisp-links starting (event-driven, no polling; linking.enabled={}, only-edit-links-on-node-init={}, \
