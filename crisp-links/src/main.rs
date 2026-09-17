@@ -1,15 +1,17 @@
 //! crisp-links — declarative audio/MIDI wiring for the crisp-vocals stack.
 //!
-//! virtual-input and virtual-mic (config/virtual-devices.conf) are both
-//! plain 2-channel filter-chain nodes, trivial passthroughs -- there is no
-//! internal mixing anywhere in that config; every mix below is built by
-//! wiring multiple sources into the same destination port and letting
-//! PipeWire sum them there natively:
+//! virtual-mic (config/virtual-devices.conf) is a plain 2-channel
+//! filter-chain node, a trivial passthrough -- there is no internal mixing
+//! anywhere in that config; every mix below is built by wiring multiple
+//! sources into the same destination port and letting PipeWire sum them
+//! there natively:
 //!
-//!   virtual-input      -- "anything connected" (e.g. the synth) lands here. Its
-//!                  dedicated output half (capture_FL/FR) is fanned by
-//!                  this file into `virtual-mic`'s input.
-//!   virtual-mic -- virtual-input's output + crisp-vocals' `out_L`/`out_R`,
+//!   virtual-input      -- "anything connected" (e.g. the synth, or an external
+//!                  soundboard script writing to it by name) lands here. Its
+//!                  automatic monitor_FL/FR (every Sink gets this for free,
+//!                  mirroring whatever was fed in) is fanned by this file
+//!                  into `virtual-mic`'s input.
+//!   virtual-mic -- virtual-input's monitor + crisp-vocals' `out_L`/`out_R`,
 //!                  summed at virtual-mic's own input. This is BOTH the
 //!                  mic device apps (Discord/OBS/...) select AND, via its
 //!                  own monitor tap, the user's self-monitor mix routed to
@@ -243,14 +245,14 @@ fn routes(hardware: &HardwareConf) -> Vec<Route> {
     let mic_input = dev(hardware.mic_node_name.clone(), "capture_");
     let crisp_vocals_input = dev(NAME_CRISP_VOCALS, "in_");
     let crisp_vocals_out = dev(NAME_CRISP_VOCALS, "out_");
-    let virtual_input_out = dev(NAME_VIRTUAL_INPUT, "capture_");
+    let virtual_input_monitor = dev(NAME_VIRTUAL_INPUT, "monitor_");
     let virtual_mic_sink_in = dev(NAME_VIRTUAL_MIC, "playback_");
 
     let mut r = vec![
         // Processed voice -> virtual-mic's input.
         pairs(crisp_vocals_out, virtual_mic_sink_in.clone(), &[("L", "playback_FL"), ("R", "playback_FR")]),
-        // "Anything connected" (virtual-input's output half) fanned into virtual-mic.
-        pairs(virtual_input_out, virtual_mic_sink_in, &[("FL", "playback_FL"), ("FR", "playback_FR")]),
+        // "Anything connected" (virtual-input's raw monitor) fanned into virtual-mic.
+        pairs(virtual_input_monitor, virtual_mic_sink_in, &[("FL", "playback_FL"), ("FR", "playback_FR")]),
     ];
     if !hardware.mic_node_name.is_empty() {
         r.insert(
@@ -767,7 +769,7 @@ impl Manager {
         }
     }
 
-    /// virtual-input's output ("anything connected", e.g. the synth) ALWAYS also
+    /// virtual-input's monitor ("anything connected", e.g. the synth) ALWAYS also
     /// reaches the default speaker device, unconditionally -- unlike
     /// virtual-mic's own self-monitor tap (gated by
     /// `linking.monitor_through_default_output`), this one is not optional:
@@ -783,12 +785,12 @@ impl Manager {
             return;
         }
 
-        let virtual_input_out = dev(NAME_VIRTUAL_INPUT, "capture_");
-        for out_port in self.resolved_ports(&virtual_input_out, PortKind::AudioOut) {
-            let Some(ch) = out_port.channel() else { continue };
+        let virtual_input_monitor = dev(NAME_VIRTUAL_INPUT, "monitor_");
+        for monitor in self.resolved_ports(&virtual_input_monitor, PortKind::AudioOut) {
+            let Some(ch) = monitor.channel() else { continue };
             let want = format!("playback_{ch}");
             if let Some(sink) = sinks.iter().find(|s| s.name == want) {
-                self.connect(&out_port, sink);
+                self.connect(&monitor, sink);
             }
         }
     }
@@ -830,6 +832,13 @@ impl Manager {
     fn ensure_virtual_sinks(&mut self) {
         self.ensure_named_sink(NAME_VIRTUAL_INPUT);
         self.ensure_named_sink(NAME_VIRTUAL_MIC);
+    }
+
+    /// The `virtual-input` node's global id, if the registry has seen it --
+    /// used only for the shutdown-time explicit-destroy workaround (see
+    /// `main`'s signal handlers).
+    fn virtual_input_node_id(&self) -> Option<u32> {
+        self.nodes.iter().find(|(_, name)| name.as_str() == NAME_VIRTUAL_INPUT).map(|(id, _)| *id)
     }
 
     fn ensure_named_sink(&mut self, name: &str) {
@@ -904,10 +913,10 @@ impl Manager {
                     dst.device.contains(NAME_CRISP_VOCALS) && dst.name.starts_with("in_") && !mic_to_proc;
                 let bad_crisp_vocals_out = crisp_vocals_out && !to_virtual_mic;
 
-                let from_virtual_input_out = src.device.contains(NAME_VIRTUAL_INPUT) && src.name.starts_with("capture_");
+                let from_virtual_input_monitor = src.device.contains(NAME_VIRTUAL_INPUT) && src.name.starts_with("monitor_");
                 let to_default_speaker =
                     default.as_deref().is_some_and(|d| dst.device == d) && dst.name.starts_with("playback_");
-                let bad_virtual_input_out = from_virtual_input_out && !to_virtual_mic && !to_default_speaker;
+                let bad_virtual_input_out = from_virtual_input_monitor && !to_virtual_mic && !to_default_speaker;
 
                 if bad_crisp_vocals_in || bad_crisp_vocals_out || bad_virtual_input_out {
                     out.push((src, dst));
@@ -1135,27 +1144,46 @@ fn main() {
         conf.synth.clone(),
     )));
 
-    // Both virtual-input and virtual-mic are filter-chain nodes now (owned
-    // by the sibling `pipewire -c virtual-devices.conf` process) and tear
-    // down on their own when that process exits -- nothing to destroy
-    // here. Just flip `shutting_down` before quitting: see its doc comment
-    // for why (`ensure_named_sink`'s Pulse-fallback race).
-    let mark_shutting_down = {
+    // virtual-input (the null-audio-sink adapter node -- a deliberate
+    // single-node repeater, not a filter-chain, so `paplay -d
+    // virtual-input`/similar can address it by that exact name) doesn't
+    // get cleaned up by PipeWire itself when this process dies -- unlike
+    // virtual-mic's filter-chain nodes, its underlying SPA node outlives a
+    // plain SIGTERM/process-exit and lingers in the graph as an orphan
+    // (observed live: `pw-cli ls Node` still shows it with a client.id
+    // that no longer resolves to any client). So on a clean shutdown,
+    // explicitly destroy it via the registry before quitting -- same
+    // mechanism `Manager` already uses to remove stray links.
+    let shutdown = {
+        let registry = registry.clone();
         let manager = Rc::clone(&manager);
-        move || manager.borrow_mut().shutting_down = true
+        move || {
+            let mut m = manager.borrow_mut();
+            m.shutting_down = true;
+            if let Some(id) = m.virtual_input_node_id() {
+                let _ = registry.destroy_global(id);
+            }
+        }
     };
-    let ml = main_loop;
-    let shutdown = mark_shutting_down.clone();
-    let _sig_int = main_loop.loop_().add_signal_local(Signal::INT, move || {
+
+    // `destroy_global` only queues a protocol message -- quitting the main
+    // loop immediately after would exit before that message is ever
+    // flushed to the socket, so the server never actually sees it. Give
+    // the loop one more short spin (a leaked one-shot timer; the process
+    // is exiting momentarily regardless) to flush it before quitting.
+    fn shutdown_after_flush(main_loop: &'static pw::main_loop::MainLoopRc, shutdown: impl Fn() + 'static) {
         shutdown();
-        ml.quit();
-    });
+        let ml = main_loop.clone();
+        let timer: &'static pw::loop_::TimerSource<'static> =
+            Box::leak(Box::new(main_loop.loop_().add_timer(move |_expirations| ml.quit())));
+        let _ = timer.update_timer(Some(Duration::from_millis(100)), None);
+    }
+
     let ml = main_loop;
-    let shutdown = mark_shutting_down;
-    let _sig_term = main_loop.loop_().add_signal_local(Signal::TERM, move || {
-        shutdown();
-        ml.quit();
-    });
+    let sig_shutdown = shutdown.clone();
+    let _sig_int = main_loop.loop_().add_signal_local(Signal::INT, move || shutdown_after_flush(ml, sig_shutdown.clone()));
+    let ml = main_loop;
+    let _sig_term = main_loop.loop_().add_signal_local(Signal::TERM, move || shutdown_after_flush(ml, shutdown.clone()));
 
     // The debounce timer: (re)armed on every registry/metadata event, fires
     // `apply_routes()` once no further event has arrived for `DEBOUNCE`.
