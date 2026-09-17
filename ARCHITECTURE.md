@@ -16,7 +16,7 @@ tiny shared library crate:
   first-run bootstrap (copy the packaged example config + auto-detect the
   mic), and the targeted `mic_node_name` text edit. Used by both binaries
   above so neither duplicates this logic.
-- **`99-crisp-vocals.conf`** — defines the two virtual devices (`vinput`,
+- **`99-crisp-vocals.conf`** — defines the two virtual devices (`virtual-input`,
   `virtual-mic`) crisp-links wires into.
 - **`99-crisp-vocals-low-latency.conf`** — a tighter PipeWire clock
   quantum, unrelated to the DSP/wiring split above but shipped alongside it
@@ -58,10 +58,10 @@ unit -- see "Supervision" below.
        ▼             │ (filter-chain│         select this as their mic
   fluidsynth ──────► │  Audio/Sink+ │
   (on-demand,        │  Source pair)│───► monitor_FL/FR
-   via vinput)        └──────┬───────┘         │
+   via virtual-input)        └──────┬───────┘         │
        ▲                     │                 ▼
        │              playback_FL/FR    (self-monitor tap,
-    vinput ◄──── MIDI keyboard           crisp-links only route)
+    virtual-input ◄──── MIDI keyboard           crisp-links only route)
   (null-sink,                                  │
    monitor fanned                              ▼
    into virtual-mic)                   real speaker device
@@ -160,7 +160,7 @@ event in practice.
   the mic chain's input.
 - **Stray-link sweeps** (`unroute_stray_mix_links`,
   `unroute_stray_synth_links`) disconnect anything on the crisp-vocals/
-  vinput/virtual-mic/synth nodes that isn't exactly the routing table above,
+  virtual-input/virtual-mic/synth nodes that isn't exactly the routing table above,
   so the graph stays exact even as apps auto-connect.
 - **On-demand synth lifecycle**: if `synth.enabled`, fluidsynth is spawned
   only while `synth.midi_keyboard_name` is plugged in, and killed when it's

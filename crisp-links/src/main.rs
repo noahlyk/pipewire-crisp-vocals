@@ -5,11 +5,11 @@
 //! config; every mix below is built by wiring multiple sources into the
 //! same destination port and letting PipeWire sum them there natively:
 //!
-//!   vinput      -- "anything connected" (e.g. the synth) lands here. Its
+//!   virtual-input      -- "anything connected" (e.g. the synth) lands here. Its
 //!                  automatic monitor_FL/FR (every Sink gets this for free,
 //!                  mirroring whatever was fed in) is fanned by this file
 //!                  into `virtual-mic`'s input.
-//!   virtual-mic -- vinput's monitor + crisp-vocals' `out_L`/`out_R`,
+//!   virtual-mic -- virtual-input's monitor + crisp-vocals' `out_L`/`out_R`,
 //!                  summed at virtual-mic's own input. This is BOTH the
 //!                  mic device apps (Discord/OBS/...) select AND, via its
 //!                  own monitor tap, the user's self-monitor mix routed to
@@ -20,7 +20,7 @@
 //!   apps -> the default speaker device (WirePlumber's normal routing; the
 //!     mic arrives there through virtual-mic's monitor self-monitor tap,
 //!     above)
-//!   <synth.midi_keyboard_name> MIDI -> fluidsynth (on-demand) -> vinput
+//!   <synth.midi_keyboard_name> MIDI -> fluidsynth (on-demand) -> virtual-input
 //!     (audible to you via virtual-mic's self-monitor tap AND to listeners
 //!     via virtual-mic's playback input) -- only when `synth.enabled` in
 //!     `crisp-vocals.ron`.
@@ -91,7 +91,7 @@ struct LinkingConf {
     /// into your default speakers -- you don't hear yourself. true: opt in
     /// to routing virtual-mic's monitor into the default output device (the
     /// "self-monitor" tap), e.g. so a MIDI-keyboard synth fanned into
-    /// vinput is audible to you.
+    /// virtual-input is audible to you.
     #[serde(default)]
     monitor_through_default_output: bool,
 }
@@ -116,7 +116,7 @@ struct HardwareConf {
 }
 
 /// Optional MIDI-keyboard-triggered synth fan-in (`Oxygen 49` -> fluidsynth
-/// -> vinput in the original single-machine setup). Entirely optional --
+/// -> virtual-input in the original single-machine setup). Entirely optional --
 /// `synth` absent, or `enabled: false`, skips this whole code path.
 #[derive(Debug, Clone, Default, Deserialize)]
 struct SynthConf {
@@ -196,7 +196,7 @@ const PENDING_LINK_TTL: Duration = Duration::from_secs(2);
 
 const NAME_CRISP_VOCALS: &str = "crisp-vocals";
 /// "Anything connected" lands here, fanned out to `virtual-mic`.
-const NAME_VINPUT: &str = "vinput";
+const NAME_VIRTUAL_INPUT: &str = "virtual-input";
 /// The single virtual mic device -- both what apps select AND the
 /// self-monitor tap.
 const NAME_VIRTUAL_MIC: &str = "virtual-mic";
@@ -243,14 +243,14 @@ fn routes(hardware: &HardwareConf) -> Vec<Route> {
     let mic_input = dev(hardware.mic_node_name.clone(), "capture_");
     let crisp_vocals_input = dev(NAME_CRISP_VOCALS, "in_");
     let crisp_vocals_out = dev(NAME_CRISP_VOCALS, "out_");
-    let vinput_monitor = dev(NAME_VINPUT, "monitor_");
+    let virtual_input_monitor = dev(NAME_VIRTUAL_INPUT, "monitor_");
     let virtual_mic_sink_in = dev(NAME_VIRTUAL_MIC, "playback_");
 
     let mut r = vec![
         // Processed voice -> virtual-mic's input.
         pairs(crisp_vocals_out, virtual_mic_sink_in.clone(), &[("L", "playback_FL"), ("R", "playback_FR")]),
-        // "Anything connected" (vinput's raw monitor) fanned into virtual-mic.
-        pairs(vinput_monitor, virtual_mic_sink_in, &[("FL", "playback_FL"), ("FR", "playback_FR")]),
+        // "Anything connected" (virtual-input's raw monitor) fanned into virtual-mic.
+        pairs(virtual_input_monitor, virtual_mic_sink_in, &[("FL", "playback_FL"), ("FR", "playback_FR")]),
     ];
     if !hardware.mic_node_name.is_empty() {
         r.insert(
@@ -424,7 +424,7 @@ impl Manager {
             // A deliberate config edit is exactly the case where
             // `only_edit_links_on_node_init`'s "leave settled nodes alone"
             // freeze should NOT apply -- otherwise toggling e.g.
-            // `monitor_through_default_output` after crisp-vocals/vinput/
+            // `monitor_through_default_output` after crisp-vocals/virtual-input/
             // virtual-mic have already settled (which, in steady state,
             // they always have) would silently no-op forever. Un-freeze
             // everything so this pass re-evaluates the whole routing table
@@ -690,7 +690,7 @@ impl Manager {
             self.apply_route(route);
         }
         self.apply_self_monitor_route();
-        self.apply_vinput_speaker_route();
+        self.apply_virtual_input_speaker_route();
         if self.synth_enabled() {
             self.apply_synth_route();
         }
@@ -708,7 +708,7 @@ impl Manager {
         }
     }
 
-    /// `virtual-mic`'s own (mixed: vinput + processed voice) output -> the
+    /// `virtual-mic`'s own (mixed: virtual-input + processed voice) output -> the
     /// default speaker device. This is the ONLY self-listen path.
     fn apply_self_monitor_route(&mut self) {
         if !self.linking.monitor_through_default_output {
@@ -717,7 +717,7 @@ impl Manager {
         }
 
         let Some(default) = self.default_sink.clone() else { return };
-        if default.contains(NAME_VIRTUAL_MIC) || default.contains(NAME_VINPUT) {
+        if default.contains(NAME_VIRTUAL_MIC) || default.contains(NAME_VIRTUAL_INPUT) {
             return;
         }
 
@@ -752,14 +752,14 @@ impl Manager {
         }
     }
 
-    /// vinput's monitor ("anything connected", e.g. the synth) ALWAYS also
+    /// virtual-input's monitor ("anything connected", e.g. the synth) ALWAYS also
     /// reaches the default speaker device, unconditionally -- unlike
     /// virtual-mic's own self-monitor tap (gated by
     /// `linking.monitor_through_default_output`), this one is not optional:
-    /// whatever you feed into vinput should always be audible to you.
-    fn apply_vinput_speaker_route(&mut self) {
+    /// whatever you feed into virtual-input should always be audible to you.
+    fn apply_virtual_input_speaker_route(&mut self) {
         let Some(default) = self.default_sink.clone() else { return };
-        if default.contains(NAME_VIRTUAL_MIC) || default.contains(NAME_VINPUT) {
+        if default.contains(NAME_VIRTUAL_MIC) || default.contains(NAME_VIRTUAL_INPUT) {
             return;
         }
 
@@ -768,8 +768,8 @@ impl Manager {
             return;
         }
 
-        let vinput_monitor = dev(NAME_VINPUT, "monitor_");
-        for monitor in self.resolved_ports(&vinput_monitor, PortKind::AudioOut) {
+        let virtual_input_monitor = dev(NAME_VIRTUAL_INPUT, "monitor_");
+        for monitor in self.resolved_ports(&virtual_input_monitor, PortKind::AudioOut) {
             let Some(ch) = monitor.channel() else { continue };
             let want = format!("playback_{ch}");
             if let Some(sink) = sinks.iter().find(|s| s.name == want) {
@@ -805,7 +805,7 @@ impl Manager {
         Some(RPort { id, node_id: info.node_id, device: device.clone(), name: info.name.clone() })
     }
 
-    /// Make sure both virtual nodes (`vinput`, `virtual-mic`) exist. The
+    /// Make sure both virtual nodes (`virtual-input`, `virtual-mic`) exist. The
     /// filter-chain (pipewire.conf.d/99-crisp-vocals.conf) provides them at
     /// PipeWire startup; as a fallback we can provision a Pulse null-sink
     /// each so there's always something to route to/pick. This is the one
@@ -813,7 +813,7 @@ impl Manager {
     /// runs if one is somehow missing (in practice: never, once
     /// 99-crisp-vocals.conf is loaded).
     fn ensure_virtual_sinks(&mut self) {
-        self.ensure_named_sink(NAME_VINPUT);
+        self.ensure_named_sink(NAME_VIRTUAL_INPUT);
         self.ensure_named_sink(NAME_VIRTUAL_MIC);
     }
 
@@ -863,12 +863,12 @@ impl Manager {
         }
     }
 
-    /// Anything on the crisp-vocals/vinput/virtual-mic nodes that isn't the
+    /// Anything on the crisp-vocals/virtual-input/virtual-mic nodes that isn't the
     /// routing table above is stray, so links stay exact even when apps
     /// auto-connect. crisp-vocals' output may ONLY reach virtual-mic's
-    /// input, and vinput's monitor may ONLY reach virtual-mic's input or
+    /// input, and virtual-input's monitor may ONLY reach virtual-mic's input or
     /// the current default speaker device (its permanent, always-on tap --
-    /// see `apply_vinput_speaker_route`).
+    /// see `apply_virtual_input_speaker_route`).
     fn unroute_stray_mix_links(&mut self) {
         let default = self.default_sink.clone();
         let stray: Vec<(RPort, RPort)> = {
@@ -889,12 +889,12 @@ impl Manager {
                     dst.device.contains(NAME_CRISP_VOCALS) && dst.name.starts_with("in_") && !mic_to_proc;
                 let bad_crisp_vocals_out = crisp_vocals_out && !to_virtual_mic;
 
-                let from_vinput_monitor = src.device.contains(NAME_VINPUT) && src.name.starts_with("monitor_");
+                let from_virtual_input_monitor = src.device.contains(NAME_VIRTUAL_INPUT) && src.name.starts_with("monitor_");
                 let to_default_speaker =
                     default.as_deref().is_some_and(|d| dst.device == d) && dst.name.starts_with("playback_");
-                let bad_vinput_out = from_vinput_monitor && !to_virtual_mic && !to_default_speaker;
+                let bad_virtual_input_out = from_virtual_input_monitor && !to_virtual_mic && !to_default_speaker;
 
-                if bad_crisp_vocals_in || bad_crisp_vocals_out || bad_vinput_out {
+                if bad_crisp_vocals_in || bad_crisp_vocals_out || bad_virtual_input_out {
                     out.push((src, dst));
                 }
             }
@@ -905,7 +905,7 @@ impl Manager {
         }
     }
 
-    /// MIDI keyboard -> fluidsynth -> vinput. The synth runs only while the
+    /// MIDI keyboard -> fluidsynth -> virtual-input. The synth runs only while the
     /// keyboard is plugged in. No-op unless `synth.enabled` in
     /// `crisp-vocals.ron`.
     fn apply_synth_route(&mut self) {
@@ -926,7 +926,7 @@ impl Manager {
         }
 
         let synth_any = dev(NAME_SYNTH, "");
-        let vinput_sink_in = dev(NAME_VINPUT, "playback_");
+        let virtual_input_sink_in = dev(NAME_VIRTUAL_INPUT, "playback_");
 
         let synth_midi_in = self.resolved_ports(&synth_any, PortKind::MidiIn).into_iter().next();
         if let Some(synth_in) = synth_midi_in {
@@ -935,17 +935,17 @@ impl Manager {
             }
         }
 
-        // Feed vinput once; its monitor is fanned into virtual-mic by
+        // Feed virtual-input once; its monitor is fanned into virtual-mic by
         // `routes()`, so the synth ends up audible in your own monitor as
         // well as to whoever captures the mic.
-        let vinput_ins = self.resolved_ports(&vinput_sink_in, PortKind::AudioIn);
+        let virtual_input_ins = self.resolved_ports(&virtual_input_sink_in, PortKind::AudioIn);
         for port in self.resolved_ports(&synth_any, PortKind::AudioOut) {
             let dest = match port.name.as_str() {
                 "left" | "output_FL" | "FL" => "playback_FL",
                 "right" | "output_FR" | "FR" => "playback_FR",
                 _ => continue,
             };
-            if let Some(sink) = vinput_ins.iter().find(|s| s.name == dest) {
+            if let Some(sink) = virtual_input_ins.iter().find(|s| s.name == dest) {
                 self.connect(&port, sink);
             }
         }
@@ -960,8 +960,8 @@ impl Manager {
                 let Some(src) = self.rport(out_id) else { continue };
                 let Some(dst) = self.rport(in_id) else { continue };
                 let from_synth = src.device.to_lowercase().contains(&NAME_SYNTH.to_lowercase());
-                let to_vinput = dst.device.contains(NAME_VINPUT) && dst.name.starts_with("playback_");
-                if from_synth && !to_vinput {
+                let to_virtual_input = dst.device.contains(NAME_VIRTUAL_INPUT) && dst.name.starts_with("playback_");
+                if from_synth && !to_virtual_input {
                     out.push((src, dst));
                 }
             }

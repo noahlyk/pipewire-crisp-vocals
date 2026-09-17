@@ -27,7 +27,7 @@
     ),
 
     // Optional: MIDI-keyboard-triggered synth fan-in (on-demand fluidsynth
-    // into vinput). Delete this whole block, or set enabled: false, if you
+    // into virtual-input). Delete this whole block, or set enabled: false, if you
     // don't use a MIDI keyboard.
     synth: (
         enabled: false,
@@ -41,7 +41,7 @@
         // false (default): you never hear yourself -- virtual-mic's own
         // mixed output is not tapped into your speakers. Set true to opt
         // in to that self-monitor tap (e.g. so a MIDI-keyboard synth fanned
-        // into vinput is audible to you).
+        // into virtual-input is audible to you).
         monitor_through_default_output: false,
     ),
 

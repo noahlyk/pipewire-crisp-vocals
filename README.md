@@ -14,10 +14,10 @@ that apps like Discord/OBS select, and that you self-monitor through.
   and hot-reloads within ~50ms of saving — no restart needed.
 - **`crisp-links`** — a persistent PipeWire client that wires the graph:
   physical mic → `crisp-vocals` → `virtual-mic`, plus an optional
-  MIDI-keyboard/synth fan-in (`vinput`) and a self-monitor tap back to your
+  MIDI-keyboard/synth fan-in (`virtual-input`) and a self-monitor tap back to your
   speakers. Purely event-driven (registry subscription, no polling).
 - Two PipeWire config drop-ins (`99-crisp-vocals.conf`,
-  `99-crisp-vocals-low-latency.conf`) that define the `vinput` and
+  `99-crisp-vocals-low-latency.conf`) that define the `virtual-input` and
   `virtual-mic` virtual devices and a low-latency clock quantum.
 
 ## Install
