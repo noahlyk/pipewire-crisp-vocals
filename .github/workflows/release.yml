@@ -41,14 +41,25 @@ jobs:
 
           COMMITS=$(git log ${LAST_TAG}..HEAD --pretty=%s 2>/dev/null || git log HEAD --pretty=%s)
 
-          if echo "$COMMITS" | grep -q "^feat:"; then
+          # Conventional Commits prefixes may carry an optional scope
+          # ("fix(devices):") and/or a breaking-change bang ("feat!:") --
+          # matching only the bare "fix:"/"feat:" form (as this used to)
+          # silently failed to bump the version for any scoped commit,
+          # which was every commit here except the very first. Every push
+          # already rebuilds and republishes a tarball regardless of
+          # message, so default to a patch bump unconditionally and only
+          # escalate for feat/breaking -- that way the version can never
+          # again silently stay put while real changes ship.
+          MINOR_MATCH='^feat(\([^)]*\))?!?:'
+          BREAKING_MATCH='^(feat|fix)(\([^)]*\))?!:|^BREAKING CHANGE:'
+
+          PATCH=$((PATCH + 1))
+          if echo "$COMMITS" | grep -qE "$MINOR_MATCH"; then
             MINOR=$((MINOR + 1))
             PATCH=0
-          elif echo "$COMMITS" | grep -q "^chore:\|^fix:\|^docs:"; then
-            PATCH=$((PATCH + 1))
           fi
 
-          if echo "$COMMITS" | grep -q "^BREAKING CHANGE:"; then
+          if echo "$COMMITS" | grep -qE "$BREAKING_MATCH"; then
             MAJOR=$((MAJOR + 1))
             MINOR=0
             PATCH=0
