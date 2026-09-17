@@ -64,8 +64,8 @@ unit -- see "Supervision" below.
        ▲                     │                 ▼
        │              playback_FL/FR    (self-monitor tap,
     virtual-input ◄──── MIDI keyboard           crisp-links only route)
-  (null-sink,                                  │
-   monitor fanned                              ▼
+  (filter-chain,                               │
+   capture_FL/FR fanned                        ▼
    into virtual-mic)                   real speaker device
 ```
 
