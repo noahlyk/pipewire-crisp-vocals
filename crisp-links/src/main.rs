@@ -87,11 +87,18 @@ struct LinkingConf {
     /// the routing table on every registry event, forever (old behavior).
     #[serde(default = "default_true")]
     only_edit_links_on_node_init: bool,
+    /// false (default): virtual-mic's own mixed output never gets tapped
+    /// into your default speakers -- you don't hear yourself. true: opt in
+    /// to routing virtual-mic's monitor into the default output device (the
+    /// "self-monitor" tap), e.g. so a MIDI-keyboard synth fanned into
+    /// vinput is audible to you.
+    #[serde(default)]
+    monitor_through_default_output: bool,
 }
 
 impl Default for LinkingConf {
     fn default() -> Self {
-        LinkingConf { enabled: true, only_edit_links_on_node_init: true }
+        LinkingConf { enabled: true, only_edit_links_on_node_init: true, monitor_through_default_output: false }
     }
 }
 
@@ -660,6 +667,11 @@ impl Manager {
     /// `virtual-mic`'s own (mixed: vinput + processed voice) output -> the
     /// default speaker device. This is the ONLY self-listen path.
     fn apply_self_monitor_route(&mut self) {
+        if !self.linking.monitor_through_default_output {
+            self.remove_self_monitor_taps();
+            return;
+        }
+
         let Some(default) = self.default_sink.clone() else { return };
         if default.contains(NAME_VIRTUAL_MIC) || default.contains(NAME_VINPUT) {
             return;
@@ -692,6 +704,25 @@ impl Manager {
             out
         };
         for (src, dst) in stray {
+            self.disconnect(&src, &dst);
+        }
+    }
+
+    /// `linking.monitor_through_default_output` is false (the default) or
+    /// was just toggled off: tear down any virtual-mic-monitor -> speaker
+    /// links that may still be around from before.
+    fn remove_self_monitor_taps(&mut self) {
+        let taps: Vec<(RPort, RPort)> = self
+            .links
+            .values()
+            .filter_map(|&(out_id, in_id)| {
+                let src = self.rport(out_id)?;
+                let dst = self.rport(in_id)?;
+                let from_self_monitor_tap = src.device.contains(NAME_VIRTUAL_MIC) && src.name.starts_with("monitor_");
+                from_self_monitor_tap.then_some((src, dst))
+            })
+            .collect();
+        for (src, dst) in taps {
             self.disconnect(&src, &dst);
         }
     }

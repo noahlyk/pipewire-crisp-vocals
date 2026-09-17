@@ -36,40 +36,29 @@ makepkg -si
 
 ## Setup
 
-1. **Load the PipeWire config drop-ins.** The package installs them to
-   `/usr/share/pipewire/pipewire.conf.d/`; symlink them into your PipeWire
-   config path if it isn't already scanned there:
+```bash
+systemctl --user enable --now pipewire-crisp-vocals.service
+```
 
-   ```bash
-   mkdir -p ~/.config/pipewire/pipewire.conf.d
-   ln -s /usr/share/pipewire/pipewire.conf.d/99-crisp-vocals.conf ~/.config/pipewire/pipewire.conf.d/
-   ln -s /usr/share/pipewire/pipewire.conf.d/99-crisp-vocals-low-latency.conf ~/.config/pipewire/pipewire.conf.d/
-   systemctl --user restart pipewire pipewire-pulse wireplumber
-   ```
+That's it. The package's PipeWire config drop-ins land in
+`/etc/pipewire/pipewire.conf.d/`, which PipeWire loads automatically
+system-wide — nothing to symlink. The one unit supervises both
+`crisp-vocals` and `crisp-links`; on first run it creates
+`~/.config/pipewire/crisp-vocals.ron` from the shipped example and
+auto-detects your mic (`hardware.mic_node_name`) from the current default
+audio source (`wpctl inspect @DEFAULT_AUDIO_SOURCE@`, with a `pactl`
+fallback).
 
-2. **Enable the one user service:**
+Then select **`virtual-mic`** as your microphone in Discord/OBS/etc.
 
-   ```bash
-   systemctl --user enable --now pipewire-crisp-vocals.service
-   ```
+Changed mics, or the auto-detected one was wrong? Use the `mic` subcommand
+instead of hand-editing the config:
 
-   This single unit supervises both `crisp-vocals` and `crisp-links`. On
-   first run (no `~/.config/pipewire/crisp-vocals.ron` yet), whichever
-   binary starts first copies the shipped example config into place and
-   fills in `hardware.mic_node_name` from your current default audio source
-   (via `wpctl inspect @DEFAULT_AUDIO_SOURCE@`, with a `pactl` fallback) --
-   no separate setup step.
-
-3. **Select `virtual-mic`** as your microphone in Discord/OBS/etc.
-
-4. **Changed mics, or the auto-detected one was wrong?** Use the `mic`
-   subcommand instead of hand-editing the config:
-
-   ```bash
-   crisp-links mic --list                 # see current PipeWire audio sources
-   crisp-links mic "USB PnP Audio Device"  # set it explicitly
-   crisp-links mic --auto                  # re-run auto-detection
-   ```
+```bash
+crisp-links mic --list                 # see current PipeWire audio sources
+crisp-links mic "USB PnP Audio Device"  # set it explicitly
+crisp-links mic --auto                  # re-run auto-detection
+```
 
 ## Configuration reference
 
@@ -95,6 +84,7 @@ three tables (`hardware`, `synth`, `linking`) once at startup.
     linking: (
         enabled: true,
         only_edit_links_on_node_init: true,
+        monitor_through_default_output: false,   // true to hear yourself through your speakers
     ),
 
     modes: {

@@ -38,6 +38,11 @@
     linking: (
         enabled: true,
         only_edit_links_on_node_init: true,
+        // false (default): you never hear yourself -- virtual-mic's own
+        // mixed output is not tapped into your speakers. Set true to opt
+        // in to that self-monitor tap (e.g. so a MIDI-keyboard synth fanned
+        // into vinput is audible to you).
+        monitor_through_default_output: false,
     ),
 
     modes: {
