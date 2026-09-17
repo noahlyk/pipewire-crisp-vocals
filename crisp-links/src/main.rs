@@ -373,6 +373,17 @@ struct Manager {
     /// once per (already-debounced) routing pass rather than via its own
     /// filesystem watcher.
     conf_mtime: Option<SystemTime>,
+
+    /// Set once a shutdown signal has been received. `apply_routes` bails
+    /// out immediately when this is set -- otherwise the virtual-devices
+    /// process dying (killed first by the wrapper script) makes
+    /// virtual-input/virtual-mic vanish from the registry a moment before
+    /// crisp-links itself exits, and the very next debounced/CONF_POLL
+    /// `apply_routes` pass would see them "missing" and provision brand
+    /// new Pulse fallback null-sinks (`ensure_named_sink`) in their place
+    /// -- which then themselves linger, defeating the whole point of
+    /// tying these nodes' lifetime to the service.
+    shutting_down: bool,
 }
 
 impl Manager {
@@ -399,6 +410,7 @@ impl Manager {
             pass_touched_nodes: HashSet::new(),
             default_sink: None,
             link_factory: None,
+            shutting_down: false,
             _default_metadata: None,
             _default_metadata_listener: None,
             synth: None,
@@ -681,6 +693,9 @@ impl Manager {
     // ── route engine ───────────────────────────────────────────────
 
     fn apply_routes(&mut self) {
+        if self.shutting_down {
+            return;
+        }
         self.maybe_reload_conf();
         if !self.linking.enabled {
             return;
@@ -815,6 +830,13 @@ impl Manager {
     fn ensure_virtual_sinks(&mut self) {
         self.ensure_named_sink(NAME_VIRTUAL_INPUT);
         self.ensure_named_sink(NAME_VIRTUAL_MIC);
+    }
+
+    /// The `virtual-input` node's global id, if the registry has seen it --
+    /// used only for the shutdown-time explicit-destroy workaround (see
+    /// `main`'s signal handlers).
+    fn virtual_input_node_id(&self) -> Option<u32> {
+        self.nodes.iter().find(|(_, name)| name.as_str() == NAME_VIRTUAL_INPUT).map(|(id, _)| *id)
     }
 
     fn ensure_named_sink(&mut self, name: &str) {
@@ -1107,11 +1129,6 @@ fn main() {
     let main_loop: &'static pw::main_loop::MainLoopRc =
         Box::leak(Box::new(pw::main_loop::MainLoopRc::new(None).expect("failed to create PipeWire main loop")));
 
-    let ml = main_loop.clone();
-    let _sig_int = main_loop.loop_().add_signal_local(Signal::INT, move || ml.quit());
-    let ml = main_loop.clone();
-    let _sig_term = main_loop.loop_().add_signal_local(Signal::TERM, move || ml.quit());
-
     let context = pw::context::ContextRc::new(main_loop, None).expect("failed to create PipeWire context");
     let core = context.connect_rc(None).expect("failed to connect to PipeWire");
     let registry = core.get_registry_rc().expect("failed to get PipeWire registry");
@@ -1124,6 +1141,46 @@ fn main() {
         conf.hardware.clone(),
         conf.synth.clone(),
     )));
+
+    // virtual-input (the null-audio-sink adapter node) doesn't get cleaned
+    // up by PipeWire itself when this process dies -- unlike virtual-mic's
+    // filter-chain nodes, its underlying SPA node outlives a plain
+    // SIGTERM/process-exit and lingers in the graph as an orphan (observed
+    // live: `pw-cli ls Node` still shows it with a client.id that no
+    // longer resolves to any client). So on a clean shutdown, explicitly
+    // destroy it via the registry before quitting -- same mechanism
+    // `Manager` already uses to remove stray links.
+    let destroy_virtual_input = {
+        let registry = registry.clone();
+        let manager = Rc::clone(&manager);
+        move || {
+            let mut m = manager.borrow_mut();
+            m.shutting_down = true;
+            if let Some(id) = m.virtual_input_node_id() {
+                let _ = registry.destroy_global(id);
+            }
+        }
+    };
+
+    // `destroy_global` only queues a protocol message -- quitting the main
+    // loop immediately after would exit before that message is ever
+    // flushed to the socket, so the server never actually sees it. Give
+    // the loop one more short spin (a leaked one-shot timer; the process
+    // is exiting momentarily regardless) to flush it before quitting.
+    fn shutdown_after_flush(main_loop: &'static pw::main_loop::MainLoopRc, destroy_virtual_input: impl Fn() + 'static) {
+        destroy_virtual_input();
+        let ml = main_loop.clone();
+        let timer: &'static pw::loop_::TimerSource<'static> =
+            Box::leak(Box::new(main_loop.loop_().add_timer(move |_expirations| ml.quit())));
+        let _ = timer.update_timer(Some(Duration::from_millis(100)), None);
+    }
+
+    let ml = main_loop;
+    let shutdown = destroy_virtual_input.clone();
+    let _sig_int = main_loop.loop_().add_signal_local(Signal::INT, move || shutdown_after_flush(ml, shutdown.clone()));
+    let ml = main_loop;
+    let shutdown = destroy_virtual_input;
+    let _sig_term = main_loop.loop_().add_signal_local(Signal::TERM, move || shutdown_after_flush(ml, shutdown.clone()));
 
     // The debounce timer: (re)armed on every registry/metadata event, fires
     // `apply_routes()` once no further event has arrived for `DEBOUNCE`.
