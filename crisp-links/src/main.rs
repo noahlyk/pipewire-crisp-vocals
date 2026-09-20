@@ -115,6 +115,16 @@ struct HardwareConf {
     /// also `crisp-links mic --auto`.
     #[serde(default)]
     mic_node_name: String,
+    /// Node name patterns (substring match, same convention as
+    /// `mic_node_name`) that monitor taps (virtual-input's speaker route,
+    /// and virtual-mic's self-monitor tap when
+    /// `linking.monitor_through_default_output` is true) should be linked
+    /// to. Empty (the default) means "whatever PipeWire's current default
+    /// output device is" -- the original auto-follow behavior. Non-empty
+    /// means monitoring goes ONLY to the matched device(s), regardless of
+    /// what the system default output is, e.g. `["Komplete"]`.
+    #[serde(default)]
+    monitor_output_devices: Vec<String>,
 }
 
 /// Optional MIDI-keyboard-triggered synth fan-in (`Oxygen 49` -> fluidsynth
@@ -725,30 +735,57 @@ impl Manager {
         }
     }
 
+    /// Node name(s) that monitor taps should be linked to. If
+    /// `hardware.monitor_output_devices` is non-empty, each pattern is
+    /// resolved (substring match, case-insensitive, same convention as
+    /// `mic_node_name`) against live node names and monitoring goes ONLY to
+    /// those matches -- the system default output is bypassed entirely.
+    /// Empty (the default) falls back to whatever the "default" PipeWire
+    /// Metadata object currently reports as the default sink.
+    fn monitor_output_nodes(&self) -> Vec<String> {
+        if self.hardware.monitor_output_devices.is_empty() {
+            return self.default_sink.clone().into_iter().collect();
+        }
+        let mut out = Vec::new();
+        for pat in &self.hardware.monitor_output_devices {
+            let pat = pat.to_lowercase();
+            for name in self.nodes.values() {
+                if name.to_lowercase().contains(&pat) && !out.contains(name) {
+                    out.push(name.clone());
+                }
+            }
+        }
+        out
+    }
+
     /// `virtual-mic`'s own (mixed: virtual-input + processed voice) output -> the
-    /// default speaker device. This is the ONLY self-listen path.
+    /// configured monitor output device(s) (default: the default speaker
+    /// device). This is the ONLY self-listen path.
     fn apply_self_monitor_route(&mut self) {
         if !self.linking.monitor_through_default_output {
             self.remove_self_monitor_taps();
             return;
         }
 
-        let Some(default) = self.default_sink.clone() else { return };
-        if default.contains(NAME_VIRTUAL_MIC) || default.contains(NAME_VIRTUAL_INPUT) {
-            return;
-        }
-
-        let sinks = self.sink_inputs(&default);
-        if sinks.is_empty() {
+        let targets: Vec<String> = self
+            .monitor_output_nodes()
+            .into_iter()
+            .filter(|t| !t.contains(NAME_VIRTUAL_MIC) && !t.contains(NAME_VIRTUAL_INPUT))
+            .collect();
+        if targets.is_empty() {
             return;
         }
 
         let virtual_mic_monitor = dev(NAME_VIRTUAL_MIC, "monitor_");
-        for monitor in self.resolved_ports(&virtual_mic_monitor, PortKind::AudioOut) {
-            let Some(ch) = monitor.channel() else { continue };
-            let want = format!("playback_{ch}");
-            if let Some(sink) = sinks.iter().find(|s| s.name == want) {
-                self.connect(&monitor, sink);
+        let monitors = self.resolved_ports(&virtual_mic_monitor, PortKind::AudioOut);
+        for target in &targets {
+            let sinks = self.sink_inputs(target);
+            for monitor in &monitors {
+                let Some(ch) = monitor.channel() else { continue };
+                let want = format!("playback_{ch}");
+                if let Some(sink) = sinks.iter().find(|s| s.name == want) {
+                    self.connect(monitor, sink);
+                }
             }
         }
 
@@ -758,7 +795,8 @@ impl Manager {
                 let Some(src) = self.rport(out_id) else { continue };
                 let Some(dst) = self.rport(in_id) else { continue };
                 let from_self_monitor_tap = src.device.contains(NAME_VIRTUAL_MIC) && src.name.starts_with("monitor_");
-                if from_self_monitor_tap && !(dst.device == default && dst.name.starts_with("playback_")) {
+                let dst_is_target = targets.iter().any(|t| t == &dst.device) && dst.name.starts_with("playback_");
+                if from_self_monitor_tap && !dst_is_target {
                     out.push((src, dst));
                 }
             }
@@ -770,27 +808,31 @@ impl Manager {
     }
 
     /// virtual-input's monitor ("anything connected", e.g. the synth) ALWAYS also
-    /// reaches the default speaker device, unconditionally -- unlike
-    /// virtual-mic's own self-monitor tap (gated by
-    /// `linking.monitor_through_default_output`), this one is not optional:
-    /// whatever you feed into virtual-input should always be audible to you.
+    /// reaches the configured monitor output device(s) (default: the default
+    /// speaker device), unconditionally -- unlike virtual-mic's own
+    /// self-monitor tap (gated by `linking.monitor_through_default_output`),
+    /// this one is not optional: whatever you feed into virtual-input should
+    /// always be audible to you.
     fn apply_virtual_input_speaker_route(&mut self) {
-        let Some(default) = self.default_sink.clone() else { return };
-        if default.contains(NAME_VIRTUAL_MIC) || default.contains(NAME_VIRTUAL_INPUT) {
-            return;
-        }
-
-        let sinks = self.sink_inputs(&default);
-        if sinks.is_empty() {
+        let targets: Vec<String> = self
+            .monitor_output_nodes()
+            .into_iter()
+            .filter(|t| !t.contains(NAME_VIRTUAL_MIC) && !t.contains(NAME_VIRTUAL_INPUT))
+            .collect();
+        if targets.is_empty() {
             return;
         }
 
         let virtual_input_monitor = dev(NAME_VIRTUAL_INPUT, "monitor_");
-        for monitor in self.resolved_ports(&virtual_input_monitor, PortKind::AudioOut) {
-            let Some(ch) = monitor.channel() else { continue };
-            let want = format!("playback_{ch}");
-            if let Some(sink) = sinks.iter().find(|s| s.name == want) {
-                self.connect(&monitor, sink);
+        let monitors = self.resolved_ports(&virtual_input_monitor, PortKind::AudioOut);
+        for target in &targets {
+            let sinks = self.sink_inputs(target);
+            for monitor in &monitors {
+                let Some(ch) = monitor.channel() else { continue };
+                let want = format!("playback_{ch}");
+                if let Some(sink) = sinks.iter().find(|s| s.name == want) {
+                    self.connect(monitor, sink);
+                }
             }
         }
     }
