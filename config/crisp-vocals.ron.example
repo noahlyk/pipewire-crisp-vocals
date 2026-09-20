@@ -24,6 +24,14 @@
         // route a physical mic into crisp-vocals until this is set (use
         // `crisp-links mic <node-name>|--auto|--list`).
         mic_node_name: "",
+
+        // Node name patterns (substring match) that monitor taps (see
+        // `linking.monitor_through_default_output` below, and
+        // virtual-input's always-on speaker route) should go to. Empty
+        // (default) = follow PipeWire's current default output device.
+        // Non-empty = monitoring goes ONLY to the matched device(s), e.g.
+        // monitor_output_devices: ["Komplete"].
+        monitor_output_devices: [],
     ),
 
     // Optional: MIDI-keyboard-triggered synth fan-in (on-demand fluidsynth
