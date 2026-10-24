@@ -1063,7 +1063,11 @@ fn extract_json_name(value: &str) -> Option<String> {
 /// client involved. Exits the process directly (success or failure) rather
 /// than returning, so `main()`'s daemon path below never runs alongside it.
 #[derive(Parser, Debug)]
-#[command(name = "crisp-links", about = "PipeWire auto-wiring for the crisp-vocals stack")]
+#[command(
+    name = "crisp-links",
+    about = "PipeWire auto-wiring for the crisp-vocals stack",
+    version = env!("PIPEWIRE_CRISP_VOCALS_VERSION")
+)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
