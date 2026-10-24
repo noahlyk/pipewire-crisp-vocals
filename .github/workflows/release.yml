@@ -81,7 +81,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Build binaries
-        run: cargo build --release --locked
+        run: PIPEWIRE_CRISP_VOCALS_VERSION=${{ needs.version.outputs.new_version }} cargo build --release --locked
       - name: Determine architecture
         id: arch
         run: |
