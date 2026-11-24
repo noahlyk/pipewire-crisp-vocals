@@ -501,11 +501,9 @@ impl Manager {
                     self.links.insert(obj.id, (o, i));
                 }
             }
-            ObjectType::Factory => {
-                if prop(obj.props, "factory.type.name") == Some(ObjectType::Link.to_str()) {
-                    if let Some(name) = prop(obj.props, "factory.name") {
-                        self.link_factory = Some(name.to_string());
-                    }
+            ObjectType::Factory if prop(obj.props, "factory.type.name") == Some(ObjectType::Link.to_str()) => {
+                if let Some(name) = prop(obj.props, "factory.name") {
+                    self.link_factory = Some(name.to_string());
                 }
             }
             _ => {}
@@ -646,7 +644,7 @@ impl Manager {
     // ── synth lifecycle (on-demand) ────────────────────────────────
 
     fn synth_running(&mut self) -> bool {
-        self.synth_stdin.is_some() && self.synth.as_mut().is_some_and(|c| is_alive(c))
+        self.synth_stdin.is_some() && self.synth.as_mut().is_some_and(is_alive)
     }
 
     fn ensure_synth_running(&mut self) {

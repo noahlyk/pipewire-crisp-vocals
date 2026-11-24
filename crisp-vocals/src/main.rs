@@ -28,16 +28,16 @@
 //! same mechanism as every other mode. Built-ins usable in any mode's
 //! `stages` list:
 //!   - expander   kills low-level background noise (downward expansion,
-//!                floored at `range-db` so it's a gentle noise-reducer,
-//!                not a mute hole)
+//!     floored at `range-db` so it's a gentle noise-reducer,
+//!     not a mute hole)
 //!   - compressor brings the level up to the "correct area" and glues the
-//!                signal (soft knee + makeup, both optional)
+//!     signal (soft knee + makeup, both optional)
 //!   - gate       a SMART SOFT gate: hysteresis (no chatter around one
-//!                threshold), a hold window (no syllable-head/tail chopping),
-//!                a steep but *floored* downward expansion (soft, never
-//!                muting). Keys on an earlier stage (`detector`, default
-//!                "expander") so compressor makeup gain can't push residual
-//!                noise back past the threshold — no feedback loop.
+//!     threshold), a hold window (no syllable-head/tail chopping),
+//!     a steep but *floored* downward expansion (soft, never
+//!     muting). Keys on an earlier stage (`detector`, default
+//!     "expander") so compressor makeup gain can't push residual
+//!     noise back past the threshold — no feedback loop.
 //!   - eq         final tone shaping (parametric biquads).
 //!   - rnnoise    spectral denoiser, applied after the rest of the chain.
 
@@ -181,6 +181,9 @@ fn default_true() -> bool {
     true
 }
 
+// Deliberately the 4-digit literal, not `FRAC_1_SQRT_2`: the constant is a
+// (very slightly) different default Q.
+#[allow(clippy::approx_constant)]
 fn default_q() -> f32 {
     0.7071
 }
@@ -305,7 +308,7 @@ fn fast_log2(x: f32) -> f32 {
     let exponent = ((bits >> 23) as i32 & 0xFF) - 127;
     let mantissa_bits = (bits & 0x007F_FFFF) | (127 << 23);
     let t = f32::from_bits(mantissa_bits) - 1.0; // in [0, 1)
-    let m = 3.190_813_1e-5
+    let m = 3.190_813e-5
         + t * (1.441_267_4
             + t * (-0.705_704_15 + t * (0.408_721_74 + t * (-0.187_722_64 + t * 0.043_428_91))));
     exponent as f32 + m
@@ -319,7 +322,7 @@ fn fast_exp2(x: f32) -> f32 {
     let xf = x.floor();
     let t = x - xf; // in [0, 1)
     let poly = 0.999_999_77
-        + t * (0.693_156_78
+        + t * (0.693_156_8
             + t * (0.240_131_69 + t * (0.055_876_56 + t * (0.008_940_58 + t * 0.001_894_38))));
     let exponent = (xf as i32 + 127).clamp(0, 255) as u32;
     poly * f32::from_bits(exponent << 23)
@@ -1074,8 +1077,7 @@ fn spawn_reloader(snapshot: Arc<ArcSwap<DspSnapshot>>, rate: u32, path: PathBuf)
             return;
         }
 
-        loop {
-            let Ok(first) = rx.recv() else { break };
+        while let Ok(first) = rx.recv() {
             let mut relevant = event_touches_config(&first, &file_name);
             // Editors commonly fire several fs events per logical save
             // (write + rename + chmod, ...); coalesce a short burst into one
@@ -1108,10 +1110,10 @@ struct CrispVocals {
 
 impl CrispVocals {
     fn new(client: &Client, snapshot: Arc<ArcSwap<DspSnapshot>>) -> Result<Self, jack::Error> {
-        let in_l = client.register_port("in_L", AudioIn::default())?;
-        let in_r = client.register_port("in_R", AudioIn::default())?;
-        let out_l = client.register_port("out_L", AudioOut::default())?;
-        let out_r = client.register_port("out_R", AudioOut::default())?;
+        let in_l = client.register_port("in_L", AudioIn)?;
+        let in_r = client.register_port("in_R", AudioIn)?;
+        let out_l = client.register_port("out_L", AudioOut)?;
+        let out_r = client.register_port("out_R", AudioOut)?;
         let rate = client.sample_rate() as u32;
         RATE.store(rate, Ordering::Relaxed);
 
