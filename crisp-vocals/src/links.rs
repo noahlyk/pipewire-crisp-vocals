@@ -1113,6 +1113,11 @@ pub fn run(dry_run: bool) {
         move || {
             let mut m = manager.borrow_mut();
             m.shutting_down = true;
+            // A dry run only watches: the node belongs to the real
+            // service's virtual-devices process, which is still running.
+            if m.dry_run {
+                return;
+            }
             if let Some(id) = m.virtual_input_node_id() {
                 let _ = registry.destroy_global(id);
             }
