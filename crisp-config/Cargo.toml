@@ -2,6 +2,8 @@
 name = "crisp-config"
 version = "0.1.0"
 edition = "2021"
+authors = ["noahlyk <noahlykins@gmail.com>"]
+license = "MIT"
 
 [lib]
 name = "crisp_config"

@@ -2,6 +2,8 @@
 name = "crisp-vocals"
 version = "0.1.0"
 edition = "2021"
+authors = ["noahlyk <noahlykins@gmail.com>"]
+license = "MIT"
 
 [[bin]]
 name = "crisp-vocals"

@@ -9,7 +9,8 @@ license=('MIT')
 depends=('pipewire' 'jack')
 optdepends=('fluidsynth: optional MIDI-keyboard synth fan-in (synth.enabled in crisp-vocals.ron)')
 makedepends=()
-options=('!debug')
+options=('!debug' '!lto')
+install=pipewire-crisp-vocals.install
 
 _arch="$CARCH"
 if [ "$_arch" = "x86_64" ]; then
@@ -41,20 +42,4 @@ package() {
     install -Dm644 "$srcdir/README.md" "$pkgdir/usr/share/doc/$pkgname/README.md"
     install -Dm644 "$srcdir/ARCHITECTURE.md" "$pkgdir/usr/share/doc/$pkgname/ARCHITECTURE.md"
     install -Dm644 "$srcdir/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
-}
-
-post_install() {
-    echo ""
-    echo "==> pipewire-crisp-vocals installed. Enable it:"
-    echo ""
-    echo "    systemctl --user enable --now pipewire-crisp-vocals.service"
-    echo ""
-    echo "    That's it -- config is auto-created at ~/.config/pipewire/crisp-vocals.ron"
-    echo "    with your mic auto-detected on first run. Edit that file to tune the DSP"
-    echo "    chain (hot-reloads within ~50ms, no restart needed), or run"
-    echo "    'crisp-vocals mic --list|--auto|<node-name>' to change the routed mic."
-}
-
-post_upgrade() {
-    post_install
 }

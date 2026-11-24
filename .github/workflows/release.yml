@@ -17,8 +17,13 @@ jobs:
           jq -r '.head_commit.message' "$GITHUB_EVENT_PATH" | grep -q "^chore: bump version" && skip=true || true
           echo "skip=$skip" >> "$GITHUB_OUTPUT"
 
-  version:
+  check:
     needs: [check-skip]
+    if: needs.check-skip.outputs.should_skip == 'false'
+    uses: ./.github/workflows/check.yml
+
+  version:
+    needs: [check-skip, check]
     if: needs.check-skip.outputs.should_skip == 'false'
     runs-on: ubuntu-latest
     container: archlinux:latest
@@ -107,7 +112,7 @@ jobs:
           cp systemd/pipewire-crisp-vocals.service "$OUT/"
           cp config/*.conf config/*.example "$OUT/"
           cp scripts/pipewire-crisp-vocals-wrapper.sh "$OUT/"
-          cp README.md ARCHITECTURE.md LICENSE "$OUT/"
+          cp README.md ARCHITECTURE.md LICENSE pipewire-crisp-vocals.install "$OUT/"
           tar -czf "${OUT}.tar.gz" -C "$OUT" .
           sha256sum "${OUT}.tar.gz" > "${OUT}.sha256"
       - name: Upload build artifacts
@@ -116,7 +121,8 @@ jobs:
           name: build-output
           path: |
             PKGBUILD
-            aur/
+            pipewire-crisp-vocals.install
+            aur/PKGBUILD
             pipewire-crisp-vocals-*.tar.gz
             pipewire-crisp-vocals-*.sha256
 
@@ -148,7 +154,7 @@ jobs:
       - name: Commit version bump and tag
         run: |
           VERSION=${{ needs.version.outputs.new_version }}
-          git add PKGBUILD aur/
+          git add PKGBUILD aur/PKGBUILD
           git commit -m "chore: bump version to v${VERSION}" || echo "No changes to commit"
           git tag "v${VERSION}" -f
           git push origin main
@@ -197,8 +203,10 @@ jobs:
           chown -R builduser:builduser /home/builduser/.ssh
           ssh-keyscan aur.archlinux.org >> /home/builduser/.ssh/known_hosts
 
-          cp -r aur /home/builduser/aur
-          chown -R builduser:builduser /home/builduser/aur
+          mkdir -p /home/builduser/aur
+          cp aur/PKGBUILD /home/builduser/aur/
+          cp pipewire-crisp-vocals.install /home/builduser/
+          chown -R builduser:builduser /home/builduser/aur /home/builduser/pipewire-crisp-vocals.install
 
           sudo -u builduser VERSION="$VERSION" GIT_SSH_COMMAND="ssh -i /home/builduser/.ssh/aur -o StrictHostKeyChecking=no" bash -c '
             cd /home/builduser
@@ -219,13 +227,13 @@ jobs:
             fi
 
             rm -rf aur-push/*
-            cp aur/PKGBUILD aur-push/
+            cp aur/PKGBUILD pipewire-crisp-vocals.install aur-push/
 
             cd aur-push
             makepkg --printsrcinfo > .SRCINFO
             git config user.name "GitHub Action"
             git config user.email "action@github.com"
-            git add PKGBUILD .SRCINFO
+            git add PKGBUILD .SRCINFO pipewire-crisp-vocals.install
             git commit -m "Update to v${VERSION}" || echo "No changes to commit"
             git push origin master
           '

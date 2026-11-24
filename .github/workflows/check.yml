@@ -1,0 +1,31 @@
+name: Check
+
+# The bar every change is held to: it builds, no clippy finding, every test
+# green, the shell scripts parse. Called by the PR and release workflows, so a
+# release never ships what a PR couldn't. `make check` runs the same locally.
+on:
+  workflow_call:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Install system dependencies
+        run: pacman -Syu --noconfirm base-devel git rust pipewire jack2 pkgconf clang
+      - uses: actions/checkout@v4
+        with:
+          # build.rs derives the version from `git describe`
+          fetch-depth: 0
+      - name: Trust the checkout
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: Build
+        run: cargo build --locked --all-targets
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Tests
+        run: cargo test --locked
+      - name: Scripts parse
+        run: |
+          bash -n scripts/pipewire-crisp-vocals-wrapper.sh
+          bash -n pipewire-crisp-vocals.install
