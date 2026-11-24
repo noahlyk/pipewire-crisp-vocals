@@ -2,42 +2,56 @@
 
 ## Overview
 
-Two small, single-purpose daemons plus two PipeWire config drop-ins, plus a
-tiny shared library crate:
+One installed binary, run as two single-purpose processes, plus two PipeWire
+config drop-ins and a tiny shared library crate:
 
-- **`crisp-vocals`** (JACK client) — the DSP chain. Reads raw mic audio,
-  writes processed audio. Nothing else.
-- **`crisp-links`** (native PipeWire registry client) — the wiring. Watches
-  the graph and issues link create/destroy calls so the right nodes are
-  connected to the right nodes. Also owns the `mic` CLI subcommand
-  (`crisp-links mic <node-name> | --auto | --list`) for editing
-  `hardware.mic_node_name` without hand-editing RON.
+- **`crisp-vocals dsp`** (JACK client, the `dsp` module) — the DSP chain.
+  Reads raw mic audio, writes processed audio. Nothing else.
+- **`crisp-vocals links`** (native PipeWire registry client, the `links`
+  module) — the wiring. Watches the graph and issues link create/destroy
+  calls so the right nodes are connected to the right nodes.
+- **`crisp-vocals mic <node-name> | --auto | --list`** (the `mic` module) —
+  a one-shot CLI for editing `hardware.mic_node_name` without hand-editing
+  RON. No daemon, no PipeWire client (it shells out to `wpctl`/`pactl`).
+- **`crisp-vocals --version`** — the version, and which running process is
+  still an older build (see "Versions" below).
 - **`crisp-config`** (library crate, no binary) — config-path resolution,
   first-run bootstrap (copy the packaged example config + auto-detect the
-  mic), and the targeted `mic_node_name` text edit. Used by both binaries
-  above so neither duplicates this logic.
+  mic), the targeted `mic_node_name` text edit, and the version files.
 - **`virtual-devices.conf`** — defines the two virtual devices (`virtual-input`,
-  `virtual-mic`) crisp-links wires into. Run as a standalone `pipewire -c`
-  client process (supervised by the wrapper script), not a conf.d drop-in,
-  so both nodes only exist while the service is up.
+  `virtual-mic`) the links process wires into. Run as a standalone
+  `pipewire -c` client process (supervised by the wrapper script), not a
+  conf.d drop-in, so both nodes only exist while the service is up.
 - **`99-crisp-vocals-low-latency.conf`** — a tighter PipeWire clock
   quantum, unrelated to the DSP/wiring split above but shipped alongside it
   since it's what makes the whole chain feel instant.
 
-Splitting DSP from wiring means either can be restarted, tested, or
-reasoned about independently — `crisp-vocals` never touches the PipeWire
-registry, `crisp-links` never touches a sample. Both binaries are started
-and supervised together by ONE systemd unit,
-`pipewire-crisp-vocals.service`, via a small wrapper script
-(`scripts/pipewire-crisp-vocals-wrapper.sh`) that forwards signals to both
-children and treats either one exiting on its own as a failure of the whole
-unit -- see "Supervision" below.
+### One binary, two processes, and why
+
+The workspace has two crates: `crisp-vocals` (the binary; `main.rs` is the
+clap CLI and dispatches to `dsp.rs`, `links.rs` or `mic.rs`) and
+`crisp-config` (the shared library). Until 0.3.0 the wiring daemon was a
+second binary, `crisp-links`; it is gone. One binary means one file to
+install, one version to report and one `--help` — the two halves were
+always released, installed and restarted together anyway.
+
+They stay **two processes** at runtime. `crisp-vocals dsp` only ever runs the
+`dsp` module: it never calls `pipewire::init()` or opens a registry
+connection (libpipewire is linked into the binary for the links side, but
+only `links::run` initialises it), and `crisp-vocals links` never touches a
+sample. So a stall, panic or crash in the wiring can never take the
+realtime audio path with it, either can be restarted, tested or reasoned
+about independently, and each keeps its own scheduling. Both are started
+and supervised together by ONE systemd unit, `pipewire-crisp-vocals.service`,
+via a small wrapper script (`scripts/pipewire-crisp-vocals-wrapper.sh`) that
+forwards signals to the children and treats any one exiting on its own as
+a failure of the whole unit -- see "Supervision" below.
 
 ## Signal flow
 
 ```
                     ┌──────────────────┐
- physical mic ─────►│   crisp-vocals   │
+ physical mic ─────►│ crisp-vocals dsp │
  (capture_FL/FR)    │  (JACK client)   │
                     │                  │
                     │ stereo2mono      │
@@ -63,7 +77,7 @@ unit -- see "Supervision" below.
    via virtual-input)        └──────┬───────┘         │
        ▲                     │                 ▼
        │              playback_FL/FR    (self-monitor tap,
-    virtual-input ◄──── MIDI keyboard           crisp-links only route)
+    virtual-input ◄──── MIDI keyboard           links-only route)
   (null-sink,                                   │
    monitor fanned                               ▼
    into virtual-mic)                   real speaker device
@@ -71,8 +85,8 @@ unit -- see "Supervision" below.
 
 All mixing happens by PipeWire summing multiple links landing on the same
 destination port (`virtual-mic`'s `playback_FL`/`playback_FR`) — neither
-`crisp-vocals` nor the filter-chain config does any internal mixing.
-`crisp-links` is the only thing that decides which sources land where.
+the DSP nor the filter-chain config does any internal mixing.
+`crisp-vocals links` is the only thing that decides which sources land where.
 
 ## Why one virtual-mic lane, not two
 
@@ -105,7 +119,7 @@ lane's monitor to speakers while the good lane feeds `virtual-mic`. Nothing
 in the single-lane `Stage`/`Dynamics`/`Gate`/`Biquad` code needs to change to
 do that — only the port count and `VocalDsp::process`'s return type.
 
-## Hot-reload design (`crisp-vocals`)
+## Hot-reload design (`crisp-vocals dsp`)
 
 1. A background thread watches the config's *directory* (not the file
    itself) via `notify`'s inotify backend, non-recursively.
@@ -132,13 +146,12 @@ do that — only the port count and `VocalDsp::process`'s return type.
    state (`VocalDsp::adopt`) — the realtime thread never allocates for
    anything but that clone, never locks, and never does string/config work.
 
-`crisp-links` does not hot-reload: its `hardware`/`synth`/`linking` tables
-are read once at startup, since they describe wiring topology (which nodes
-to connect), not tunable runtime parameters — changing them meaningfully
-usually means the physical setup changed too, which is a restart-worthy
-event in practice.
+`crisp-vocals links` has no file watcher: it checks the config's mtime
+every second (`CONF_POLL`) and re-reads its `hardware`/`synth`/`linking`
+tables when it moved. A changed `linking` or `mic_node_name` un-settles
+every node so the whole routing table is re-applied once.
 
-## Wiring design (`crisp-links`)
+## Wiring design (`crisp-vocals links`)
 
 - **Event-driven, not polling.** A persistent PipeWire client subscribes to
   the registry (node/port/link add+remove) and to the `"default"` metadata
@@ -170,8 +183,8 @@ event in practice.
 
 ## Config bootstrap (`crisp-config`)
 
-Neither binary requires a separate setup step or unit anymore. At startup,
-both `crisp-vocals::main` and `crisp-links::main` call
+No separate setup step or unit. At startup, both `dsp::run` and
+`links::run` call
 `crisp_config::bootstrap_if_missing()` before touching `crisp-vocals.ron`:
 
 1. If `config_path()` already exists, it's a no-op.
@@ -185,7 +198,7 @@ both `crisp-vocals::main` and `crisp-links::main` call
    `// active_mode: "raw"` in the example), and writes the result to
    `config_path()`.
 3. The actual file creation uses `OpenOptions::create_new` — atomic
-   "create iff absent" at the OS level — so when both binaries race to
+   "create iff absent" at the OS level — so when both processes race to
    bootstrap at once (the normal case now that one systemd unit starts them
    together), the loser's `AlreadyExists` is treated as success rather than
    clobbering the winner's write. A full temp-file-plus-rename dance was
@@ -193,70 +206,76 @@ both `crisp-vocals::main` and `crisp-links::main` call
    file.
 
 The same `crisp-config::set_mic_node_name_in_text` text-edit routine backs
-`crisp-links mic <node-name>` / `mic --auto`, so there's exactly one place
+`crisp-vocals mic <node-name>` / `mic --auto`, so there's exactly one place
 that knows how to safely rewrite that one line.
 
 ## Supervision (single systemd unit)
 
 `pipewire-crisp-vocals.service` runs one `ExecStart`:
 `scripts/pipewire-crisp-vocals-wrapper.sh`, a small bash script that starts
-both `pw-jack crisp-vocals` and `crisp-links` as background jobs (both
-binaries resolved via `PATH`, since `PKGBUILD` installs them to
-`/usr/bin`) and:
+`pipewire -c virtual-devices.conf`, `pw-jack crisp-vocals dsp` and
+`crisp-vocals links` as background jobs (the binary resolved via `PATH`,
+since `PKGBUILD` installs it to `/usr/bin`) and:
 
 - On SIGTERM/SIGINT (a normal `systemctl stop`), forwards the signal to
-  both children, waits for a clean exit, and exits 0 — `Restart=on-failure`
+  all children, waits for a clean exit, and exits 0 — `Restart=on-failure`
   correctly leaves the unit stopped.
-- If either child exits on its own for any other reason (crash, or any
-  exit at all — even a "clean" 0, since one half of the stack going away
+- If any child exits on its own for any other reason (crash, or any
+  exit at all — even a "clean" 0, since part of the stack going away
   unprompted is never a healthy steady state here), the wrapper brings the
-  other child down too and exits non-zero with the worse of the two exit
-  codes, so `Restart=on-failure` restarts the *whole* unit rather than
-  leaving one half running alone.
+  others down too and exits non-zero with the worst of the exit codes, so
+  `Restart=on-failure` restarts the *whole* unit rather than leaving part
+  of it running alone.
 
 This replaces the old three separate units (`crisp-vocals.service`,
 `crisp-links.service`, `crisp-vocals-setup.service`) with one.
 
 ## Versions, and noticing a service that was not restarted
 
-All binaries report one version string, computed by `crisp-config/build.rs`
+The binary reports one version string, computed by `crisp-config/build.rs`
 and exported as `crisp_config::daemon::VERSION`: the
 `PIPEWIRE_CRISP_VOCALS_VERSION` environment variable when set (release
 builds and the `PKGBUILD`, whose `pkgver()` computes the same string), else
 `git describe` (`0.3.0` on a tag, `0.3.0+4.gabc1234[.dirty]` past it), else
 `0.0.0+g<hash>`.
 
-A package upgrade replaces `/usr/bin/crisp-vocals` and `crisp-links` but
-leaves the running service on the old code. There is no IPC channel to ask
-a daemon what it is (the config file is the only interface), so
-`crisp_config::daemon` uses a file per daemon:
+A package upgrade replaces `/usr/bin/crisp-vocals` but leaves the running
+service on the old code. There is no IPC channel to ask a process what it
+is (the config file is the only interface), so `crisp_config::daemon` uses
+a file per process role:
 
-- At startup each daemon writes
-  `$XDG_RUNTIME_DIR/crisp-vocals/<name>.version` (`crisp-vocals.version`,
-  `crisp-links.version`): version string, PID and process start time, one
-  per line, written to a temp file and renamed. `crisp-links --dry-run`
-  writes nothing.
-- `crisp-links` removes its file on SIGINT/SIGTERM. `crisp-vocals` has no
-  signal handling (it is simply killed), so its file stays behind; that is
-  harmless, because a record only counts while its PID is alive, its
-  `/proc/<pid>/exe` is that daemon and the start time matches (a reused PID
-  never does), and the next start overwrites it.
-- `crisp-vocals --version` / `crisp-links --version` print
-  `<bin> <version>` and then check both daemons. A valid record with a
-  different version string (exact comparison) adds
-  `(daemon out-of-date, running <version>)`. With no valid record, a
-  running daemon whose `/proc/<pid>/exe` ends in ` (deleted)` (its binary
-  was replaced on disk; e.g. a build from before the version files) adds
-  `(daemon out-of-date: running an older build)`. Matching versions, or
-  nothing running, add nothing. Every failure on this path reads as
-  "nothing to report".
+- At startup each process writes
+  `$XDG_RUNTIME_DIR/crisp-vocals/<role>.version`, i.e. `dsp.version` and
+  `links.version`: version string, PID and process start time, one per
+  line, written to a temp file and renamed. `links --dry-run` writes
+  nothing.
+- `links` removes its file on SIGINT/SIGTERM. `dsp` has no signal handling
+  (it is simply killed), so its file stays behind; that is harmless,
+  because a record only counts while its PID is alive and that process is
+  the same role — `/proc/<pid>/exe` is `crisp-vocals` and the first
+  argument in `/proc/<pid>/cmdline` is `dsp` or `links` (both share one
+  executable, so the subcommand is what tells them apart) — and its start
+  time matches (a reused PID never does). The next start overwrites it.
+- `crisp-vocals --version` (`-V`) prints one line, `crisp-vocals <version>`,
+  and checks both roles. A valid record with a different version string
+  (exact comparison) counts as out of date, running that version. With no
+  valid record, a process of that role whose `/proc/<pid>/exe` ends in
+  ` (deleted)` (its binary was replaced on disk, e.g. a build from before
+  the version files) counts as running an older build. That check also
+  recognises the 0.3.0 layout — a bare `crisp-vocals` (the DSP) and a bare
+  `crisp-links` — so the first upgrade to the single binary is caught.
+  Out-of-date roles are appended in brackets, grouped by what they run:
+  `(dsp, links out-of-date, running 0.3.0)`, or
+  `(dsp out-of-date, running 0.3.0; links out-of-date, running an older build)`.
+  Matching versions, or nothing running, add nothing. Every failure on this
+  path reads as "nothing to report".
 
 ## Configuration is one shared file
 
-`crisp-vocals.ron` is read by both binaries: `crisp-vocals` owns
-`preamp_db`/`active_mode`/`modes`, `crisp-links` owns `hardware`/`synth`/
+`crisp-vocals.ron` is read by both processes: `dsp` owns
+`preamp_db`/`active_mode`/`modes`, `links` owns `hardware`/`synth`/
 `linking`. Neither validates the other's tables strictly — `ron::Value` /
 `Option` fallbacks mean a bad or absent table on either side degrades to a
 documented default rather than refusing to start. This keeps the machine's
 whole audio-routing description in one human-edited file without coupling
-the two binaries' schemas together at the type level.
+the two modules' schemas together at the type level.

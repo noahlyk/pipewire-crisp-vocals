@@ -80,7 +80,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Build binaries
+      - name: Build binary
         run: PIPEWIRE_CRISP_VOCALS_VERSION=${{ needs.version.outputs.new_version }} cargo build --release --locked
       - name: Determine architecture
         id: arch
@@ -103,7 +103,7 @@ jobs:
           VERSION=${{ needs.version.outputs.new_version }}
           OUT="pipewire-crisp-vocals-${VERSION}-${ARCH_NAME}"
           mkdir -p "$OUT"
-          cp target/release/crisp-vocals target/release/crisp-links "$OUT/"
+          cp target/release/crisp-vocals "$OUT/"
           cp systemd/pipewire-crisp-vocals.service "$OUT/"
           cp config/*.conf config/*.example "$OUT/"
           cp scripts/pipewire-crisp-vocals-wrapper.sh "$OUT/"

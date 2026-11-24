@@ -7,18 +7,22 @@ that apps like Discord/OBS select, and that you self-monitor through.
 
 ## What it does
 
-- **`crisp-vocals`** — a JACK client that runs your mic through a
+One installed binary, `crisp-vocals`, run by the service as two processes:
+
+- **`crisp-vocals dsp`** — a JACK client that runs your mic through a
   configurable DSP chain (stereo→mono fold, RNNoise spectral denoise,
   expander, compressor, soft gate, parametric EQ) and outputs `out_L`/
   `out_R`. The chain is described in `~/.config/pipewire/crisp-vocals.ron`
   and hot-reloads within ~50ms of saving — no restart needed.
-- **`crisp-links`** — a persistent PipeWire client that wires the graph:
-  physical mic → `crisp-vocals` → `virtual-mic`, plus an optional
+- **`crisp-vocals links`** — a persistent PipeWire client that wires the graph:
+  physical mic → `crisp-vocals` (the DSP) → `virtual-mic`, plus an optional
   MIDI-keyboard/synth fan-in (`virtual-input`) and a self-monitor tap back to your
   speakers. Purely event-driven (registry subscription, no polling).
+  `crisp-vocals links --dry-run` logs what it would change without touching
+  the graph (safe next to the running service).
 - `virtual-input`/`virtual-mic` are defined in `config/virtual-devices.conf`
   and run as their own `pipewire -c` client process, supervised by the
-  service alongside `crisp-vocals`/`crisp-links` -- so those nodes only
+  service alongside the `dsp` and `links` processes -- so those nodes only
   exist while the service is running, not for as long as the whole audio
   daemon is up. A separate conf.d drop-in (`99-crisp-vocals-low-latency.conf`)
   sets a system-wide low-latency clock quantum.
@@ -44,7 +48,7 @@ systemctl --user enable --now pipewire-crisp-vocals.service
 ```
 
 That's it. The one unit supervises `virtual-devices` (the
-`virtual-input`/`virtual-mic` nodes), `crisp-vocals` and `crisp-links` —
+`virtual-input`/`virtual-mic` nodes), `crisp-vocals dsp` and `crisp-vocals links` —
 nothing to symlink, and the virtual devices disappear from the PipeWire
 graph the moment the service is stopped. On first run it creates
 `~/.config/pipewire/crisp-vocals.ron` from the shipped example and
@@ -58,28 +62,30 @@ Changed mics, or the auto-detected one was wrong? Use the `mic` subcommand
 instead of hand-editing the config:
 
 ```bash
-crisp-links mic --list                 # see current PipeWire audio sources
-crisp-links mic "USB PnP Audio Device"  # set it explicitly
-crisp-links mic --auto                  # re-run auto-detection
+crisp-vocals mic --list                 # see current PipeWire audio sources
+crisp-vocals mic "USB PnP Audio Device"  # set it explicitly
+crisp-vocals mic --auto                  # re-run auto-detection
 ```
 
 ## Upgrading
 
-An upgrade replaces the binaries, but the running service keeps the old
-code until it is restarted. `--version` (or `-V`) on either binary tells
-you when that is the case:
+An upgrade replaces the binary, but the running service keeps the old
+code until it is restarted. `crisp-vocals --version` (or `-V`) tells you
+when that is the case, naming which of the two processes is stale:
 
 ```console
 $ crisp-vocals --version
-crisp-vocals 0.3.0+4.gabc1234
-(daemon out-of-date, running 0.2.9+1.gdef5678)
+crisp-vocals 0.4.0+4.gabc1234 (dsp, links out-of-date, running 0.3.0+1.gdef5678)
 ```
 
-The second line appears only when the running service differs from the
+The note in brackets appears only when a running process differs from the
 binary you ran; nothing is added when they match or the service is not
-running. A service started by a build too old to report its version shows
-`(daemon out-of-date: running an older build)` instead. Either way, restart
-it (the mic drops out for a moment while the chain comes back up):
+running. Processes that differ from each other are listed separately
+(`(dsp out-of-date, running 0.3.0; links out-of-date, running …)`), and one
+started by a build too old to report its version shows `running an older
+build` (this is what the first upgrade from 0.3.0, which still had a
+separate `crisp-links` binary, reports). Either way, restart it (the mic
+drops out for a moment while the chain comes back up):
 
 ```bash
 systemctl --user restart pipewire-crisp-vocals.service
@@ -87,14 +93,16 @@ systemctl --user restart pipewire-crisp-vocals.service
 
 Versions are `0.3.0` for a release and `0.3.0+4.gabc1234` for a build from a
 checkout (4 commits past the tag, at that commit; `.dirty` is appended for
-uncommitted changes). The running daemons record theirs in
-`$XDG_RUNTIME_DIR/crisp-vocals/` (see [ARCHITECTURE.md](ARCHITECTURE.md)).
+uncommitted changes). The running processes record theirs in
+`$XDG_RUNTIME_DIR/crisp-vocals/dsp.version` and `links.version` (see
+[ARCHITECTURE.md](ARCHITECTURE.md)).
 
 ## Configuration reference
 
 Everything lives in `~/.config/pipewire/crisp-vocals.ron`, hot-reloaded by
-`crisp-vocals` (the DSP chain) on every save; `crisp-links` reads its own
-three tables (`hardware`, `synth`, `linking`) once at startup.
+`crisp-vocals dsp` (the DSP chain) on every save; `crisp-vocals links`
+re-reads its own three tables (`hardware`, `synth`, `linking`) within about a
+second of a change.
 
 ```ron
 (

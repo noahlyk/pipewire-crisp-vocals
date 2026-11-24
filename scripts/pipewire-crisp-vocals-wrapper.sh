@@ -2,8 +2,10 @@
 # ExecStart for the single pipewire-crisp-vocals.service unit: supervises
 # virtual-devices (the virtual-input/virtual-mic PipeWire nodes, run as a
 # plain client process rather than a conf.d drop-in so they only exist
-# while this unit is up), crisp-vocals (DSP, via pw-jack) and crisp-links
-# (wiring) as one systemd unit.
+# while this unit is up), `crisp-vocals dsp` (the DSP chain, via pw-jack)
+# and `crisp-vocals links` (the wiring) as one systemd unit. dsp and links
+# are the same executable run as two processes, so a stall or crash in the
+# wiring can never take the realtime audio path with it.
 #
 #   - SIGTERM/SIGINT (systemctl stop, or a normal shutdown) are forwarded to
 #     all three children; this script then waits for them to exit and
@@ -16,21 +18,21 @@
 #     Restart=on-failure restarts the WHOLE unit rather than leaving part
 #     of it running alone.
 #
-# Binaries are resolved via PATH (systemd's default PATH includes
-# /usr/bin, where PKGBUILD installs both) rather than hardcoded absolute
+# The binary is resolved via PATH (systemd's default PATH includes
+# /usr/bin, where PKGBUILD installs it) rather than hardcoded absolute
 # paths, so this script doesn't need to know its own install prefix.
 set -u
 
 pipewire -c /usr/share/pipewire-crisp-vocals/virtual-devices.conf &
 devices_pid=$!
-pw-jack crisp-vocals &
-vocals_pid=$!
-crisp-links &
+pw-jack crisp-vocals dsp &
+dsp_pid=$!
+crisp-vocals links &
 links_pid=$!
 
 forward_signal() {
     kill -s "$1" "$devices_pid" 2>/dev/null
-    kill -s "$1" "$vocals_pid" 2>/dev/null
+    kill -s "$1" "$dsp_pid" 2>/dev/null
     kill -s "$1" "$links_pid" 2>/dev/null
 }
 
@@ -38,7 +40,7 @@ clean_shutdown() {
     sig="$1"
     forward_signal "$sig"
     wait "$devices_pid" 2>/dev/null
-    wait "$vocals_pid" 2>/dev/null
+    wait "$dsp_pid" 2>/dev/null
     wait "$links_pid" 2>/dev/null
     exit 0
 }
@@ -52,7 +54,7 @@ trap 'clean_shutdown INT' INT
 # on its own -- always treated as a failure of the whole unit, even if
 # that child's own exit code happened to be 0, since "part of the stack
 # quietly went away" is never a healthy steady state for this unit.
-if wait -n "$devices_pid" "$vocals_pid" "$links_pid"; then
+if wait -n "$devices_pid" "$dsp_pid" "$links_pid"; then
     first_status=0
 else
     first_status=$?
@@ -62,12 +64,12 @@ fi
 # codes so systemd's journal shows what actually happened.
 forward_signal TERM
 wait "$devices_pid" 2>/dev/null; devices_status=$?
-wait "$vocals_pid" 2>/dev/null; vocals_status=$?
+wait "$dsp_pid" 2>/dev/null; dsp_status=$?
 wait "$links_pid" 2>/dev/null; links_status=$?
 
 status=$first_status
 [ "$devices_status" -gt "$status" ] && status=$devices_status
-[ "$vocals_status" -gt "$status" ] && status=$vocals_status
+[ "$dsp_status" -gt "$status" ] && status=$dsp_status
 [ "$links_status" -gt "$status" ] && status=$links_status
 [ "$status" -eq 0 ] && status=1 # a child exiting at all is a failure here
 

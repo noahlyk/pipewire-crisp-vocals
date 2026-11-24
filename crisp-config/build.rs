@@ -1,5 +1,5 @@
-//! Works out the version string every binary of the workspace reports (`crisp-vocals --version`,
-//! `crisp-links --version`), exported as `crisp_config::daemon::VERSION`.
+//! Works out the version string `crisp-vocals --version` reports, exported as
+//! `crisp_config::daemon::VERSION`.
 //!
 //! Priority:
 //! 1. `PIPEWIRE_CRISP_VOCALS_VERSION` in the environment. Release builds set this to the release version.

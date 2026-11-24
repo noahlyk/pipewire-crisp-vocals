@@ -49,14 +49,13 @@ build() {
 package() {
     cd "$startdir"
 
-    # Binaries
+    # The one binary: `crisp-vocals dsp`, `crisp-vocals links`, `crisp-vocals mic`
     install -Dm755 "target/release/crisp-vocals" "$pkgdir/usr/bin/crisp-vocals"
-    install -Dm755 "target/release/crisp-links" "$pkgdir/usr/bin/crisp-links"
 
-    # Supervisor wrapper (single systemd unit starts both binaries)
+    # Supervisor wrapper (single systemd unit starts the dsp and links processes)
     install -Dm755 "scripts/pipewire-crisp-vocals-wrapper.sh" "$pkgdir/usr/lib/crisp-vocals/pipewire-crisp-vocals-wrapper.sh"
 
-    # systemd user unit (one unit, supervises both binaries)
+    # systemd user unit (one unit, supervises both processes)
     install -Dm644 "systemd/pipewire-crisp-vocals.service" "$pkgdir/usr/lib/systemd/user/pipewire-crisp-vocals.service"
 
     # Low-latency clock quantum: a genuine system-wide daemon setting, so
@@ -68,7 +67,7 @@ package() {
     # drop-in), so the nodes only exist while the service is running.
     install -Dm644 "config/virtual-devices.conf" "$pkgdir/usr/share/pipewire-crisp-vocals/virtual-devices.conf"
 
-    # Example config, packaged as a runtime asset (both binaries bootstrap
+    # Example config, packaged as a runtime asset (both processes bootstrap
     # from this path on first run -- see crisp-config::EXAMPLE_CONF_PATH)
     install -Dm644 "config/crisp-vocals.ron.example" "$pkgdir/usr/share/pipewire-crisp-vocals/crisp-vocals.ron.example"
 
@@ -87,7 +86,7 @@ post_install() {
     echo "    That's it -- config is auto-created at ~/.config/pipewire/crisp-vocals.ron"
     echo "    with your mic auto-detected on first run. Edit that file to tune the DSP"
     echo "    chain (hot-reloads within ~50ms, no restart needed), or run"
-    echo "    'crisp-links mic --list|--auto|<node-name>' to change the routed mic."
+    echo "    'crisp-vocals mic --list|--auto|<node-name>' to change the routed mic."
 }
 
 post_upgrade() {

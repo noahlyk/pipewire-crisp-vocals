@@ -1,18 +1,18 @@
 //! crisp-config — shared config-bootstrap and mic-detection logic used by
-//! both `crisp-vocals` and `crisp-links`, so neither duplicates it.
+//! the `dsp`, `links` and `mic` subcommands of `crisp-vocals`.
 //!
 //! Responsibilities:
-//!   - resolving the one shared `crisp-vocals.ron` path (same rule both
-//!     binaries used to implement separately)
+//!   - resolving the one shared `crisp-vocals.ron` path (same rule for
+//!     both processes)
 //!   - first-run bootstrap: copy the packaged example config into place and
 //!     fill in `hardware.mic_node_name` from the system's current default
 //!     audio source, replacing the old `first-run-setup.sh` +
 //!     `crisp-vocals-setup.service` one-shot unit
 //!   - a targeted in-place text edit of the `mic_node_name` line, shared by
-//!     the bootstrap path and `crisp-links mic <node-name>`/`--auto`
-//!   - `wpctl status` parsing for `crisp-links mic --list`
+//!     the bootstrap path and `crisp-vocals mic <node-name>`/`--auto`
+//!   - `wpctl status` parsing for `crisp-vocals mic --list`
 //!   - the build's version string and the running daemons' version files
-//!     behind both binaries' `--version` (see `daemon`)
+//!     behind `crisp-vocals --version` (see `daemon`)
 
 pub mod daemon;
 
@@ -25,8 +25,7 @@ use std::process::Command;
 /// `package()`). Bootstrapped from here into `config_path()` on first run.
 pub const EXAMPLE_CONF_PATH: &str = "/usr/share/pipewire-crisp-vocals/crisp-vocals.ron.example";
 
-/// Same resolution order `crisp-vocals` and `crisp-links` each used to
-/// implement independently: `$CRISP_VOCALS_CONF`, else
+/// One resolution order for every subcommand: `$CRISP_VOCALS_CONF`, else
 /// `$XDG_CONFIG_HOME/pipewire/crisp-vocals.ron`, else
 /// `~/.config/pipewire/crisp-vocals.ron`.
 pub fn config_path() -> PathBuf {
@@ -39,12 +38,12 @@ pub fn config_path() -> PathBuf {
 
 /// Ensure `config_path()` exists, copying the packaged example config into
 /// place (with `hardware.mic_node_name` filled in from the current default
-/// audio source, if one can be detected) the first time either binary runs
+/// audio source, if one can be detected) the first time either process runs
 /// on a machine. Never overwrites an existing config.
 ///
-/// Both `crisp-vocals` and `crisp-links` call this at startup (replacing
+/// Both `crisp-vocals dsp` and `crisp-vocals links` call this at startup (replacing
 /// the old separate `crisp-vocals-setup.service` unit), so it has to be
-/// race-safe against the two binaries starting at roughly the same time
+/// race-safe against the two processes starting at roughly the same time
 /// (e.g. both launched by the new single systemd unit's wrapper script).
 /// The race is handled by opening the destination with `create_new` --
 /// atomic "create iff it doesn't exist yet" at the OS level -- so whichever
@@ -188,7 +187,7 @@ pub fn set_mic_node_name_in_text(text: &str, mic: &str) -> String {
 }
 
 /// Apply `set_mic_node_name_in_text` to the config file on disk. Used by
-/// `crisp-links mic <node-name>` / `crisp-links mic --auto`.
+/// `crisp-vocals mic <node-name>` / `crisp-vocals mic --auto`.
 pub fn update_mic_node_name(path: &Path, mic: &str) -> io::Result<()> {
     let text = fs::read_to_string(path)?;
     let new_text = set_mic_node_name_in_text(&text, mic);
@@ -196,7 +195,7 @@ pub fn update_mic_node_name(path: &Path, mic: &str) -> io::Result<()> {
 }
 
 /// List current PipeWire audio source nodes (display names), for
-/// `crisp-links mic --list`. Parses `wpctl status`'s `Sources:` section --
+/// `crisp-vocals mic --list`. Parses `wpctl status`'s `Sources:` section --
 /// simpler than standing up a full PipeWire registry client just to
 /// enumerate nodes for a one-shot CLI command.
 pub fn list_audio_sources() -> io::Result<Vec<String>> {

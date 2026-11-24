@@ -1,7 +1,6 @@
 # Rust build artifacts
 /target/
 crisp-vocals/target/
-crisp-links/target/
 
 # Arch package build artifacts
 /pkg/

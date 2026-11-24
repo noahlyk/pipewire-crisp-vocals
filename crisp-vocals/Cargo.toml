@@ -9,6 +9,8 @@ path = "src/main.rs"
 
 [dependencies]
 crisp-config = { path = "../crisp-config" }
+clap = { version = "4", features = ["derive"] }
+pipewire = { version = "0.10.1", features = ["v1_2_0"] }
 jack = "0.11.4"
 arc-swap = "1"
 serde = { version = "1", features = ["derive"] }

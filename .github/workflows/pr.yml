@@ -11,7 +11,7 @@ jobs:
       - name: Install system dependencies
         run: pacman -Syu --noconfirm base-devel git rust pipewire jack2 pkgconf clang
       - uses: actions/checkout@v4
-      - name: Build binaries
+      - name: Build binary
         run: cargo build --release --locked
       - name: Run tests
         run: cargo test --release --locked
@@ -24,7 +24,7 @@ jobs:
             ARCH_NAME="aarch64"
           fi
           mkdir -p pipewire-crisp-vocals-pr-${ARCH_NAME}
-          cp target/release/crisp-vocals target/release/crisp-links pipewire-crisp-vocals-pr-${ARCH_NAME}/
+          cp target/release/crisp-vocals pipewire-crisp-vocals-pr-${ARCH_NAME}/
           cp systemd/pipewire-crisp-vocals.service pipewire-crisp-vocals-pr-${ARCH_NAME}/
           cp config/*.conf config/*.example pipewire-crisp-vocals-pr-${ARCH_NAME}/
           cp scripts/pipewire-crisp-vocals-wrapper.sh pipewire-crisp-vocals-pr-${ARCH_NAME}/

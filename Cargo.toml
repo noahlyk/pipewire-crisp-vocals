@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crisp-vocals", "crisp-links", "crisp-config"]
+members = ["crisp-vocals", "crisp-config"]
 
 [profile.release]
 opt-level = 3

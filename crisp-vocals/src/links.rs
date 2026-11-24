@@ -1,4 +1,4 @@
-//! crisp-links — declarative audio/MIDI wiring for the crisp-vocals stack.
+//! `crisp-vocals links` — declarative audio/MIDI wiring for the crisp-vocals stack.
 //!
 //! virtual-mic (config/virtual-devices.conf) is a plain 2-channel
 //! filter-chain node, a trivial passthrough -- there is no internal mixing
@@ -40,11 +40,10 @@
 //! created/destroyed natively (`Core::create_object`/`Registry::destroy_global`)
 //! rather than by shelling out to `pw-link`.
 //!
-//! `--dry-run`: logs every connect/disconnect/vmic-provision/synth-start
+//! `links --dry-run`: logs every connect/disconnect/vmic-provision/synth-start
 //! decision instead of performing it -- fully read-only against the live
 //! graph, safe to run alongside the real service for diagnosis.
 
-use clap::{Args, Parser, Subcommand};
 use pipewire as pw;
 use pw::loop_::Signal;
 use pw::properties::properties;
@@ -62,7 +61,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 // ────────────────────────────────────────────────────────────────────
 // CONFIG — `hardware`/`synth`/`linking` tables in `crisp-vocals.ron`
-// (shared with crisp-vocals, RON not TOML; this crate only reads those
+// (shared with the DSP process, RON not TOML; this module only reads those
 // three fields out of it). Field names are used as-is (snake_case),
 // matching the structs below.
 // ────────────────────────────────────────────────────────────────────
@@ -112,7 +111,7 @@ struct HardwareConf {
     /// "Komplete". Blank (the shipped default) means "no physical mic
     /// routed yet" -- `crisp_config::bootstrap_if_missing()` fills this in
     /// from the system's current default audio source on first run; see
-    /// also `crisp-links mic --auto`.
+    /// also `crisp-vocals mic --auto`.
     #[serde(default)]
     mic_node_name: String,
     /// Node name patterns (substring match, same convention as
@@ -146,25 +145,24 @@ fn default_true() -> bool {
     true
 }
 
-/// Same resolution order as crisp-vocals' `config_path()`, so both daemons
-/// agree on the one `crisp-vocals.ron` without either hardcoding the
-/// other's path: `$CRISP_VOCALS_CONF`, else
+/// The shared `crisp_config::config_path()`, so the DSP and links
+/// processes agree on the one `crisp-vocals.ron`: `$CRISP_VOCALS_CONF`, else
 /// `$XDG_CONFIG_HOME/pipewire/crisp-vocals.ron`, else
 /// `~/.config/pipewire/crisp-vocals.ron`.
 fn config_path() -> PathBuf {
     crisp_config::config_path()
 }
 
-/// Loaded once at startup (unlike crisp-vocals, this crate has no hot
-/// reload) -- missing file or bad tables fall back to defaults rather than
+/// Read at startup and re-read every `CONF_POLL` (no file watcher, unlike
+/// the DSP) -- missing file or bad tables fall back to defaults rather than
 /// refusing to start, since the rest of `crisp-vocals.ron` (modes, stages)
-/// isn't this crate's business.
+/// isn't this module's business.
 fn load_conf() -> RootConf {
     let path = config_path();
     let text = match std::fs::read_to_string(&path) {
         Ok(t) => t,
         Err(e) => {
-            eprintln!("[crisp-links] cannot read {}: {e}; using default settings", path.display());
+            eprintln!("[crisp-vocals links] cannot read {}: {e}; using default settings", path.display());
             return RootConf::default();
         }
     };
@@ -172,7 +170,7 @@ fn load_conf() -> RootConf {
     match opts.from_str::<RootConf>(&text) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("[crisp-links] bad config {}: {e}; using default settings", path.display());
+            eprintln!("[crisp-vocals links] bad config {}: {e}; using default settings", path.display());
             RootConf::default()
         }
     }
@@ -390,7 +388,7 @@ struct Manager {
     /// out immediately when this is set -- otherwise the virtual-devices
     /// process dying (killed first by the wrapper script) makes
     /// virtual-input/virtual-mic vanish from the registry a moment before
-    /// crisp-links itself exits, and the very next debounced/CONF_POLL
+    /// this process itself exits, and the very next debounced/CONF_POLL
     /// `apply_routes` pass would see them "missing" and provision brand
     /// new Pulse fallback null-sinks (`ensure_named_sink`) in their place
     /// -- which then themselves linger, defeating the whole point of
@@ -453,7 +451,7 @@ impl Manager {
             // they always have) would silently no-op forever. Un-freeze
             // everything so this pass re-evaluates the whole routing table
             // against the new config, then it re-settles as normal.
-            println!("[crisp-links] config changed: {:?} -> {:?}; re-applying routes", self.linking, conf.linking);
+            println!("[crisp-vocals links] config changed: {:?} -> {:?}; re-applying routes", self.linking, conf.linking);
             self.settled_nodes.clear();
         }
         self.linking = conf.linking;
@@ -876,7 +874,7 @@ impl Manager {
 
     /// The `virtual-input` node's global id, if the registry has seen it --
     /// used only for the shutdown-time explicit-destroy workaround (see
-    /// `main`'s signal handlers).
+    /// `run`'s signal handlers).
     fn virtual_input_node_id(&self) -> Option<u32> {
         self.nodes.iter().find(|(_, name)| name.as_str() == NAME_VIRTUAL_INPUT).map(|(id, _)| *id)
     }
@@ -1044,7 +1042,7 @@ fn is_alive(child: &mut Child) -> bool {
 /// Pull `"name"` out of a PipeWire metadata JSON value, e.g.
 /// `{"name":"alsa_output...."}` -> `alsa_output....`. Metadata values for
 /// `default.audio.sink` are always this shape in practice; a tiny ad-hoc
-/// extractor keeps this crate free of a JSON dependency for one field.
+/// extractor keeps the binary free of a JSON dependency for one field.
 fn extract_json_name(value: &str) -> Option<String> {
     let after_key = &value[value.find("\"name\"")? + 6..];
     let after_colon = after_key[after_key.find(':')? + 1..].trim_start();
@@ -1057,116 +1055,18 @@ fn extract_json_name(value: &str) -> Option<String> {
 // MAIN — persistent PipeWire client, event-driven.
 // ────────────────────────────────────────────────────────────────────
 
-/// `crisp-links mic ...` -- CLI-only config editing, no daemon/PipeWire
-/// client involved. Exits the process directly (success or failure) rather
-/// than returning, so `main()`'s daemon path below never runs alongside it.
-#[derive(Parser, Debug)]
-#[command(name = "crisp-links", about = "PipeWire auto-wiring for the crisp-vocals stack")]
-struct Cli {
-    #[command(subcommand)]
-    command: Option<Commands>,
-    /// Print version (and whether the running service is an older build)
-    // Not clap's built-in version flag: that prints one fixed string, and
-    // this also reports a running service that is out of date.
-    #[arg(short = 'V', long)]
-    version: bool,
-    /// Log every connect/disconnect/vmic-provision/synth-start decision
-    /// instead of performing it. Ignored when a subcommand is given.
-    #[arg(long, global = true)]
-    dry_run: bool,
-}
-
-#[derive(Subcommand, Debug)]
-enum Commands {
-    /// Get/set hardware.mic_node_name in ~/.config/pipewire/crisp-vocals.ron
-    Mic(MicArgs),
-}
-
-#[derive(Args, Debug)]
-struct MicArgs {
-    /// Set hardware.mic_node_name to this exact PipeWire node name.
-    node_name: Option<String>,
-    /// Re-run auto-detection (same logic as first-run bootstrap) and set
-    /// hardware.mic_node_name to the result.
-    #[arg(long)]
-    auto: bool,
-    /// List current PipeWire audio source nodes instead of setting anything.
-    #[arg(long)]
-    list: bool,
-}
-
-fn run_mic_command(args: MicArgs) -> ! {
+/// `crisp-vocals links`: run the wiring daemon until SIGINT/SIGTERM.
+/// `dry_run` logs every decision instead of performing it.
+pub fn run(dry_run: bool) {
     if let Err(e) = crisp_config::bootstrap_if_missing() {
-        eprintln!("[crisp-links] config bootstrap failed: {e}");
-    }
-
-    if args.list {
-        match crisp_config::list_audio_sources() {
-            Ok(sources) if sources.is_empty() => {
-                eprintln!("[crisp-links] no audio sources found (is wpctl/PipeWire running?)");
-                std::process::exit(1);
-            }
-            Ok(sources) => {
-                for s in sources {
-                    println!("{s}");
-                }
-                std::process::exit(0);
-            }
-            Err(e) => {
-                eprintln!("[crisp-links] failed to list audio sources: {e}");
-                std::process::exit(1);
-            }
-        }
-    }
-
-    let mic = if args.auto {
-        match crisp_config::detect_default_mic() {
-            Some(m) => m,
-            None => {
-                eprintln!("[crisp-links] could not auto-detect the default audio source");
-                std::process::exit(1);
-            }
-        }
-    } else if let Some(name) = args.node_name {
-        name
-    } else {
-        eprintln!("usage: crisp-links mic <node-name> | crisp-links mic --auto | crisp-links mic --list");
-        std::process::exit(2);
-    };
-
-    let path = config_path();
-    match crisp_config::update_mic_node_name(&path, &mic) {
-        Ok(()) => {
-            println!("set hardware.mic_node_name = \"{mic}\" in {}", path.display());
-            std::process::exit(0);
-        }
-        Err(e) => {
-            eprintln!("[crisp-links] failed to update {}: {e}", path.display());
-            std::process::exit(1);
-        }
-    }
-}
-
-fn main() {
-    let cli = Cli::parse();
-    if cli.version {
-        crisp_config::daemon::print_version("crisp-links");
-        return;
-    }
-    if let Some(Commands::Mic(args)) = cli.command {
-        run_mic_command(args);
-    }
-    let dry_run = cli.dry_run;
-
-    if let Err(e) = crisp_config::bootstrap_if_missing() {
-        eprintln!("[crisp-links] config bootstrap failed: {e}");
+        eprintln!("[crisp-vocals links] config bootstrap failed: {e}");
     }
     let conf = load_conf();
 
     if conf.hardware.mic_node_name.is_empty() {
         eprintln!(
-            "[crisp-links] hardware.mic_node_name is blank in crisp-vocals.ron -- the physical mic won't be \
-             routed to crisp-vocals until it's set. Run `crisp-links mic --auto` or `crisp-links mic <node-name>`, \
+            "[crisp-vocals links] hardware.mic_node_name is blank in crisp-vocals.ron -- the physical mic won't be \
+             routed to crisp-vocals until it's set. Run `crisp-vocals mic --auto` or `crisp-vocals mic <node-name>`, \
              or edit the config by hand."
         );
     }
@@ -1186,7 +1086,7 @@ fn main() {
 
     // Tell `--version` which build is running (removed again on a clean
     // exit, below). A dry run is not the service, so it leaves no record.
-    let version_file = if dry_run { None } else { crisp_config::daemon::announce("crisp-links") };
+    let version_file = if dry_run { None } else { crisp_config::daemon::announce(crisp_config::daemon::Role::Links) };
 
     let manager = Rc::new(RefCell::new(Manager::new(
         core.clone(),
@@ -1307,7 +1207,7 @@ fn main() {
     let _ = reload_timer.update_timer(Some(CONF_POLL), Some(CONF_POLL));
 
     println!(
-        "crisp-links starting (event-driven, no polling; linking.enabled={}, only-edit-links-on-node-init={}, \
+        "crisp-vocals links starting (event-driven, no polling; linking.enabled={}, only-edit-links-on-node-init={}, \
          synth-enabled={}){}...",
         conf.linking.enabled,
         conf.linking.only_edit_links_on_node_init,

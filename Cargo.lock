@@ -283,25 +283,16 @@ name = "crisp-config"
 version = "0.1.0"
 
 [[package]]
-name = "crisp-links"
-version = "0.1.0"
-dependencies = [
- "clap 4.6.6",
- "crisp-config",
- "pipewire",
- "ron",
- "serde",
-]
-
-[[package]]
 name = "crisp-vocals"
 version = "0.1.0"
 dependencies = [
  "arc-swap",
+ "clap 4.6.6",
  "crisp-config",
  "jack",
  "nnnoiseless",
  "notify",
+ "pipewire",
  "ron",
  "serde",
 ]

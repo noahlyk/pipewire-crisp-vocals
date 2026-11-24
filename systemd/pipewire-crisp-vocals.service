@@ -1,9 +1,12 @@
 # pipewire-crisp-vocals: the single unit for the whole stack -- supervises
-# both crisp-vocals (DSP chain, config hot-reloaded from
-# ~/.config/pipewire/crisp-vocals.ron) and crisp-links (declarative
-# PipeWire auto-wiring, config read from the same file) via a small wrapper
-# script. Config is auto-bootstrapped on first run by the binaries
-# themselves -- no separate setup unit.
+# both processes of the one crisp-vocals binary, `crisp-vocals dsp` (DSP
+# chain, config hot-reloaded from ~/.config/pipewire/crisp-vocals.ron) and
+# `crisp-vocals links` (declarative PipeWire auto-wiring, config read from
+# the same file), via a small wrapper script. Config is auto-bootstrapped on
+# first run by the processes themselves -- no separate setup unit.
+# After a package upgrade, `crisp-vocals --version` says whether the running
+# processes are still the old build; `systemctl --user restart
+# pipewire-crisp-vocals.service` picks up the new one.
 [Unit]
 Description=crisp-vocals dedicated mic processing + auto-wiring
 Documentation=https://github.com/noahlyk/pipewire-crisp-vocals

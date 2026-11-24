@@ -25,11 +25,10 @@ source=(
 sha256sums=('SKIP' 'SKIP')
 
 package() {
-    # The release tarball bundles both binaries, the supervisor wrapper
+    # The release tarball bundles the crisp-vocals binary, the supervisor wrapper
     # script, the single systemd unit, the PipeWire config drop-ins and the
     # docs -- see .github/workflows/release.yml's "Create tarball" step.
     install -Dm755 "$srcdir/crisp-vocals" "$pkgdir/usr/bin/crisp-vocals"
-    install -Dm755 "$srcdir/crisp-links" "$pkgdir/usr/bin/crisp-links"
 
     install -Dm755 "$srcdir/pipewire-crisp-vocals-wrapper.sh" "$pkgdir/usr/lib/crisp-vocals/pipewire-crisp-vocals-wrapper.sh"
 
@@ -53,7 +52,7 @@ post_install() {
     echo "    That's it -- config is auto-created at ~/.config/pipewire/crisp-vocals.ron"
     echo "    with your mic auto-detected on first run. Edit that file to tune the DSP"
     echo "    chain (hot-reloads within ~50ms, no restart needed), or run"
-    echo "    'crisp-links mic --list|--auto|<node-name>' to change the routed mic."
+    echo "    'crisp-vocals mic --list|--auto|<node-name>' to change the routed mic."
 }
 
 post_upgrade() {
