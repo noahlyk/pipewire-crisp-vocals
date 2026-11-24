@@ -1,4 +1,5 @@
-//! Works out the version string the binary reports (`crisp-links --version`).
+//! Works out the version string every binary of the workspace reports (`crisp-vocals --version`,
+//! `crisp-links --version`), exported as `crisp_config::daemon::VERSION`.
 //!
 //! Priority:
 //! 1. `PIPEWIRE_CRISP_VOCALS_VERSION` in the environment. Release builds set this to the release version.
@@ -40,10 +41,7 @@ fn git_version() -> Option<String> {
 }
 
 fn untagged_version() -> String {
-    match git(&["rev-parse", "--short", "HEAD"]) {
-        Some(hash) => format!("0.0.0+g{hash}"),
-        None => "0.0.0".to_string(),
-    }
+    git(&["rev-parse", "--short", "HEAD"]).map_or_else(|| "0.0.0".to_string(), |hash| format!("0.0.0+g{hash}"))
 }
 
 /// Re-run this script when the checked-out commit, its branch, tags, or any tracked file change

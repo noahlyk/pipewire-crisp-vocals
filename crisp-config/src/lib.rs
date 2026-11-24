@@ -11,6 +11,10 @@
 //!   - a targeted in-place text edit of the `mic_node_name` line, shared by
 //!     the bootstrap path and `crisp-links mic <node-name>`/`--auto`
 //!   - `wpctl status` parsing for `crisp-links mic --list`
+//!   - the build's version string and the running daemons' version files
+//!     behind both binaries' `--version` (see `daemon`)
+
+pub mod daemon;
 
 use std::fs;
 use std::io::{self, Write};

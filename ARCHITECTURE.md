@@ -217,6 +217,40 @@ binaries resolved via `PATH`, since `PKGBUILD` installs them to
 This replaces the old three separate units (`crisp-vocals.service`,
 `crisp-links.service`, `crisp-vocals-setup.service`) with one.
 
+## Versions, and noticing a service that was not restarted
+
+All binaries report one version string, computed by `crisp-config/build.rs`
+and exported as `crisp_config::daemon::VERSION`: the
+`PIPEWIRE_CRISP_VOCALS_VERSION` environment variable when set (release
+builds and the `PKGBUILD`, whose `pkgver()` computes the same string), else
+`git describe` (`0.3.0` on a tag, `0.3.0+4.gabc1234[.dirty]` past it), else
+`0.0.0+g<hash>`.
+
+A package upgrade replaces `/usr/bin/crisp-vocals` and `crisp-links` but
+leaves the running service on the old code. There is no IPC channel to ask
+a daemon what it is (the config file is the only interface), so
+`crisp_config::daemon` uses a file per daemon:
+
+- At startup each daemon writes
+  `$XDG_RUNTIME_DIR/crisp-vocals/<name>.version` (`crisp-vocals.version`,
+  `crisp-links.version`): version string, PID and process start time, one
+  per line, written to a temp file and renamed. `crisp-links --dry-run`
+  writes nothing.
+- `crisp-links` removes its file on SIGINT/SIGTERM. `crisp-vocals` has no
+  signal handling (it is simply killed), so its file stays behind; that is
+  harmless, because a record only counts while its PID is alive, its
+  `/proc/<pid>/exe` is that daemon and the start time matches (a reused PID
+  never does), and the next start overwrites it.
+- `crisp-vocals --version` / `crisp-links --version` print
+  `<bin> <version>` and then check both daemons. A valid record with a
+  different version string (exact comparison) adds
+  `(daemon out-of-date, running <version>)`. With no valid record, a
+  running daemon whose `/proc/<pid>/exe` ends in ` (deleted)` (its binary
+  was replaced on disk; e.g. a build from before the version files) adds
+  `(daemon out-of-date: running an older build)`. Matching versions, or
+  nothing running, add nothing. Every failure on this path reads as
+  "nothing to report".
+
 ## Configuration is one shared file
 
 `crisp-vocals.ron` is read by both binaries: `crisp-vocals` owns

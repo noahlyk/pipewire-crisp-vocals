@@ -63,6 +63,33 @@ crisp-links mic "USB PnP Audio Device"  # set it explicitly
 crisp-links mic --auto                  # re-run auto-detection
 ```
 
+## Upgrading
+
+An upgrade replaces the binaries, but the running service keeps the old
+code until it is restarted. `--version` (or `-V`) on either binary tells
+you when that is the case:
+
+```console
+$ crisp-vocals --version
+crisp-vocals 0.3.0+4.gabc1234
+(daemon out-of-date, running 0.2.9+1.gdef5678)
+```
+
+The second line appears only when the running service differs from the
+binary you ran; nothing is added when they match or the service is not
+running. A service started by a build too old to report its version shows
+`(daemon out-of-date: running an older build)` instead. Either way, restart
+it (the mic drops out for a moment while the chain comes back up):
+
+```bash
+systemctl --user restart pipewire-crisp-vocals.service
+```
+
+Versions are `0.3.0` for a release and `0.3.0+4.gabc1234` for a build from a
+checkout (4 commits past the tag, at that commit; `.dirty` is appended for
+uncommitted changes). The running daemons record theirs in
+`$XDG_RUNTIME_DIR/crisp-vocals/` (see [ARCHITECTURE.md](ARCHITECTURE.md)).
+
 ## Configuration reference
 
 Everything lives in `~/.config/pipewire/crisp-vocals.ron`, hot-reloaded by

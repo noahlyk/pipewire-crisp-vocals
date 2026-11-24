@@ -1063,14 +1063,15 @@ fn extract_json_name(value: &str) -> Option<String> {
 /// client involved. Exits the process directly (success or failure) rather
 /// than returning, so `main()`'s daemon path below never runs alongside it.
 #[derive(Parser, Debug)]
-#[command(
-    name = "crisp-links",
-    about = "PipeWire auto-wiring for the crisp-vocals stack",
-    version = env!("PIPEWIRE_CRISP_VOCALS_VERSION")
-)]
+#[command(name = "crisp-links", about = "PipeWire auto-wiring for the crisp-vocals stack")]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
+    /// Print version (and whether the running service is an older build)
+    // Not clap's built-in version flag: that prints one fixed string, and
+    // this also reports a running service that is out of date.
+    #[arg(short = 'V', long)]
+    version: bool,
     /// Log every connect/disconnect/vmic-provision/synth-start decision
     /// instead of performing it. Ignored when a subcommand is given.
     #[arg(long, global = true)]
@@ -1150,6 +1151,10 @@ fn run_mic_command(args: MicArgs) -> ! {
 
 fn main() {
     let cli = Cli::parse();
+    if cli.version {
+        crisp_config::daemon::print_version("crisp-links");
+        return;
+    }
     if let Some(Commands::Mic(args)) = cli.command {
         run_mic_command(args);
     }
@@ -1180,6 +1185,10 @@ fn main() {
     let context = pw::context::ContextRc::new(main_loop, None).expect("failed to create PipeWire context");
     let core = context.connect_rc(None).expect("failed to connect to PipeWire");
     let registry = core.get_registry_rc().expect("failed to get PipeWire registry");
+
+    // Tell `--version` which build is running (removed again on a clean
+    // exit, below). A dry run is not the service, so it leaves no record.
+    let version_file = if dry_run { None } else { crisp_config::daemon::announce("crisp-links") };
 
     let manager = Rc::new(RefCell::new(Manager::new(
         core.clone(),
@@ -1308,6 +1317,7 @@ fn main() {
         if dry_run { " [DRY RUN -- no links will be created/destroyed]" } else { "" }
     );
     main_loop.run();
+    drop(version_file);
 
     // Deliberately no `pw::deinit()` here: this only returns after
     // `main_loop.quit()` (SIGINT/SIGTERM), and several live objects above

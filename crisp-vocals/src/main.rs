@@ -1175,7 +1175,39 @@ impl ProcessHandler for CrispVocals {
 // MAIN
 // ────────────────────────────────────────────────────────────────────────────
 
+const USAGE: &str = "\
+Usage: crisp-vocals [OPTIONS]
+
+Runs the DSP chain as a JACK client (normally started by
+pipewire-crisp-vocals.service, via pw-jack).
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version (and whether the running service is an older build)";
+
+/// The only arguments are informational; anything else is rejected rather
+/// than silently starting a second DSP client.
+fn handle_args() {
+    match std::env::args().nth(1).as_deref() {
+        None => {}
+        Some("-V" | "--version") => {
+            crisp_config::daemon::print_version("crisp-vocals");
+            std::process::exit(0);
+        }
+        Some("-h" | "--help") => {
+            println!("{USAGE}");
+            std::process::exit(0);
+        }
+        Some(other) => {
+            eprintln!("crisp-vocals: unexpected argument '{other}'\n\n{USAGE}");
+            std::process::exit(2);
+        }
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    handle_args();
+
     if let Err(e) = crisp_config::bootstrap_if_missing() {
         eprintln!("[crisp-vocals] config bootstrap failed: {e}");
     }
@@ -1183,6 +1215,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (client, _status) = Client::new("crisp-vocals", ClientOptions::empty())?;
     let rate = client.sample_rate() as u32;
     RATE.store(rate, Ordering::Relaxed);
+
+    // Tell `--version` which build is running. Removed if `main` returns;
+    // the usual stop is SIGTERM, which leaves the file behind, and readers
+    // discard a record whose process is gone.
+    let _version_file = crisp_config::daemon::announce("crisp-vocals");
 
     let path = config_path();
     let initial_conf = load_config_at(&path);
